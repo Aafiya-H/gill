@@ -5,3 +5,4 @@ __pycache__
 venv
 runs/
 data/
+checkpoints/gill_opt/cc3m_embeddings_urls.npy
