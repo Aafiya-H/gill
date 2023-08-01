@@ -56,11 +56,11 @@ best_acc1 = 0  # Variable to keep track of best model so far.
 
 def parse_args(args):
   parser = argparse.ArgumentParser(description='GILL training')
-  parser.add_argument('--opt-version', default='facebook/opt-6.7b',
+  parser.add_argument('--opt-version', default='facebook/opt-125m',
                       choices=llm_models,
                       help='OPT versions: ' +
                         ' | '.join(llm_models) +
-                        ' (default: "facebook/opt-6.7b")')
+                        ' (default: "facebook/opt-125m")')
   parser.add_argument('--visual-model', default='openai/clip-vit-large-patch14', type=str,
                       help="Visual encoder to use.")
   parser.add_argument('--num-tokens', default=8, type=int, metavar='N', help='Number of [IMG] tokens to use.')

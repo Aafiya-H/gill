@@ -5,4 +5,4 @@ __pycache__
 venv
 runs/
 data/
-checkpoints/gill_opt/cc3m_embeddings_urls.npy
+checkpoints/gill_opt/cc3m_embeddings_urls.npycheckpoints/gill_opt/pretrained_ckpt.pth.tar
