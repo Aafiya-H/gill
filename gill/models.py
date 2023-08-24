@@ -13,7 +13,7 @@ import pickle as pkl
 from PIL import Image, UnidentifiedImageError
 from requests.exceptions import ConnectionError
 
-from transformers import AutoTokenizer, AutoModel, CLIPVisionModel, OPTForCausalLM
+from transformers import AutoTokenizer, AutoModel, CLIPVisionModel, OPTForCausalLM, ClapModel
 from gill import utils
 from gill import layers
 
@@ -21,10 +21,15 @@ from gill import layers
 class GILLArgs:
   freeze_lm: bool = True
   freeze_vm: bool = True
-  opt_version: str = 'facebook/opt-6.7b'
+  freeze_am: bool = True
+  opt_version: str = 'facebook/opt-125m'
   visual_encoder: str = 'openai/clip-vit-large-patch14'
   n_visual_tokens: int = 1
+  n_audio_tokens: int = 1
   task: str = 'captioning'
+
+  audio_encoder: str = "laion/clap-htsat-fused"
+    
   ret_emb_dim: Optional[int] = 256
   gen_emb_dim: Optional[int] = 256
   text_emb_layers: List[int] = [-1]
@@ -42,6 +47,9 @@ class GILLModel(nn.Module):
     self.tokenizer = tokenizer
     self.feature_extractor = utils.get_feature_extractor_for_model(args.visual_encoder, train=False)
     self.image_token = self.tokenizer.cls_token_id
+
+    self.feature_extractor_audio = utils.get_feature_extractor_for_model(args.audio_encoder, train=False)
+
     assert args.text_emb_layers != set(args.text_emb_layers), 'text_emb_layers not unique'
     self.args = args
     self.num_tokens = args.num_tokens
@@ -50,8 +58,25 @@ class GILLModel(nn.Module):
     opt_version = args.opt_version
     visual_encoder = args.visual_encoder
     n_visual_tokens = args.n_visual_tokens
+
+    audio_encoder = args.audio_encoder
+
     print(f"Using {opt_version} for the language model.")
     print(f"Using {visual_encoder} for the visual model with {n_visual_tokens} visual tokens.")
+    print(f"Using {audio_encoder} as audio encoder")
+    
+    self.audio_model = ClapModel.from_pretrained(audio_encoder)
+    hidden_size_audio = self.audio_model.config.projection_dim
+    
+    if self.args.freeze_am:
+      print("Freezing the audio model")
+      self.audio_model.eval()
+      for param in self.audio_model.parameters():
+        param.requires_grad = True
+    else:
+      self.audio_model.train()
+
+    self.audio_model_name = audio_encoder 
 
     if 'facebook/opt' in opt_version:
       self.lm = OPTForCausalLM.from_pretrained(opt_version)
@@ -118,14 +143,32 @@ class GILLModel(nn.Module):
         self.gen_text_hidden_fcs.append(layers.TextFcLayer(self.lm.config.hidden_size, self.args.gen_emb_dim, num_input_tokens=self.args.num_tokens, num_output_tokens=self.args.num_clip_tokens, mode=self.args.text_fc_mode))
       else:
         raise ValueError(f'Embedding of layer {layer_idx} was requested but model only has {self.lm.config.num_hidden_layers} layers.')
+      
+    print("-"*10,"Audio embedding","-"*10)
+    embedding_dim_audio = self.input_embeddings.embedding_dim * self.args.n_audio_tokens
+    self.audio_embeddings = nn.Linear(hidden_size_audio,embedding_dim_audio)
 
+    print("LM input embedding dimension : ",self.input_embeddings.embedding_dim)
+    print("number of visual tokens : ",self.args.n_visual_tokens)
+    print("Embedding dim: ",embedding_dim)
+    print("Retrieval embedding dim: ",self.args.ret_emb_dim)
     self.visual_embeddings = nn.Linear(hidden_size, embedding_dim)
-
+      
     # Retrieval image FC layer.
     self.visual_fc = nn.Linear(hidden_size, self.args.ret_emb_dim)
     self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
 
+  def get_audio_embs(self,audio_data): 
+    if "clap" in self.audio_model_name:
+      encoder_outputs = self.audio_model.get_audio_features(**audio_data)
+    else:
+      raise NotImplemented
 
+    audio_embs = self.audio_embeddings(encoder_outputs)
+    audio_embs = torch.reshape(audio_embs, (audio_embs.shape[0], self.args.n_audio_tokens, -1)) 
+    print("Audio embs shape (captioning) :",audio_embs.size())
+    return audio_embs
+    
   def get_visual_embs(self, pixel_values: torch.FloatTensor, mode: str = 'captioning'):
     if mode not in ['captioning', 'retrieval', 'generation']:
       raise ValueError(f"mode should be one of ['captioning', 'retrieval', 'generation'], got {mode} instead.")
@@ -141,9 +184,11 @@ class GILLModel(nn.Module):
     if mode == 'captioning':
       visual_embs = self.visual_embeddings(encoder_outputs)  # (2, D * n_visual_tokens)
       visual_embs = torch.reshape(visual_embs, (visual_embs.shape[0], self.args.n_visual_tokens, -1))
+      print("Visual embs shape (captioning) :",visual_embs.size())
     elif mode == 'retrieval':
       visual_embs = self.visual_fc(encoder_outputs)  # (2, D * n_visual_tokens)
       visual_embs = torch.reshape(visual_embs, (visual_embs.shape[0], 1, -1))
+      print("Visual embs shape (retrieval) :",visual_embs.size())
     elif mode == 'generation':
       visual_embs = torch.zeros((pixel_values.shape[0], 1, 768), device=pixel_values.device)
     else:
@@ -603,6 +648,7 @@ class GILL(nn.Module):
 
     with torch.no_grad():
       for p in prompts:
+        print(type(p))
         if type(p) == Image.Image:
           # Encode as image.
           pixel_values = utils.get_pixel_values_for_model(self.model.feature_extractor, p)
@@ -611,6 +657,7 @@ class GILL(nn.Module):
 
           visual_embs = self.model.get_visual_embs(pixel_values, mode='captioning')  # (1, n_visual_tokens, D)
           input_embs.append(visual_embs)
+        
         elif type(p) == str:
           text_ids = self.model.tokenizer(p, add_special_tokens=add_bos, return_tensors="pt").input_ids.to(self.model.logit_scale.device)
           # Only add <bos> once unless the flag is set.
@@ -620,6 +667,13 @@ class GILL(nn.Module):
           text_embs = self.model.input_embeddings(text_ids)  # (1, T, D)
           input_embs.append(text_embs)
           input_ids.append(text_ids)
+
+        elif type(p) in [np.ndarray,torch.Tensor,List[np.ndarray],List[torch.Tensor]]:
+          audio_data = utils.get_audio_values_for_model(self.model.feature_extractor_audio,p)
+          audio_data = audio_data.to(device=self.model.logit_scale.device,dtype=self.model.logit_scale.dtype)
+          audio_embs = self.model.get_audio_embs(audio_data)
+          input_embs.append(audio_embs)
+
         else:
           raise ValueError(f'Input prompts should be either PIL.Image.Image or str types, got {type(p)} instead.')
       input_embs = torch.cat(input_embs, dim=1)
@@ -708,6 +762,8 @@ class GILL(nn.Module):
           gen_prefix = ' '.join([f'[IMG{i}]' for i in range(self.model.args.num_tokens)])
           gen_prefx_ids = self.model.tokenizer(gen_prefix, add_special_tokens=False, return_tensors="pt").input_ids.to(self.model.logit_scale.device)
           gen_prefix_embs = self.model.input_embeddings(gen_prefx_ids)  # (1, T, D)
+          print("Raw embedding shape :",raw_emb.shape)
+          print("Generate prefix embeddings :",gen_prefix_embs.shape)
           gen_emb = self.model.gen_text_hidden_fcs[0](raw_emb, gen_prefix_embs)  # (1, 77, 768)
 
           if gen_emb.shape[1] != 77:
