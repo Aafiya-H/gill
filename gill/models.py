@@ -204,6 +204,8 @@ class GILLModel(nn.Module):
       self.lm.eval()
     if self.args.freeze_vm:
       self.visual_model.eval()
+    if self.args.freeze_am:
+      self.args.audio_model.eval()
 
 
   def forward(

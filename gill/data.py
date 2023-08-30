@@ -5,6 +5,7 @@ from typing import Optional, Tuple, List
 import collections
 import logging
 import os
+import librosa
 import numpy as np
 import pandas as pd
 import torch
@@ -20,7 +21,31 @@ def collate_fn(batch):
     batch = list(filter(lambda x: x is not None, batch))
     return torch.utils.data.dataloader.default_collate(batch)
 
+def get_audio_dataset(args, split:str, tokenizer, precision: str = 'fp32') -> Dataset:
 
+  dataset_paths = []
+  audio_data_dirs = []
+
+  if "audiocaps" in args.dataset:
+    dataset_paths.append(os.path.join(args.dataset_dir,f'{split}.csv'))
+    audio_data_dirs.append(os.path.join(args.image_dir, f'{split}'))
+  else:
+    NotImplementedError
+  
+  if len(dataset_paths) > 1:
+    print(f'{len(dataset_paths)} datasets requested: {dataset_paths}')
+    dataset = torch.utils.data.ConcatDataset([
+      AudioCapsDataset()
+      for (path, image_dir) in zip(dataset_paths, audio_data_dirs)
+    ])
+  else:
+    dataset = AudioCapsDataset(dataset_paths[0],audio_data_dirs,tokenizer,"audiocap_id","caption"
+                               args.audio_model,max_len=args.max_len, precision=args.precision)
+  return dataset
+
+    
+
+  
 def get_dataset(args, split: str, tokenizer, precision: str = 'fp32') -> Dataset:
   assert split in ['train', 'val'
     ], 'Expected split to be one of "train" or "val", got {split} instead.'
@@ -65,6 +90,36 @@ def get_dataset(args, split: str, tokenizer, precision: str = 'fp32') -> Dataset
   else:
     raise ValueError(f'There should be at least one valid dataset, got train={args.dataset}, val={args.val_dataset} instead.')
   return dataset
+
+class AudioCapsDataset(Dataset):
+  def __init__(self,csv_file_path, base_audio_dir,tokenizer, audiocap_id_col, caption_col, 
+               feature_extractor_model: str, max_len: int = 32, precision: str = 'fp32'):
+    df = pd.read_csv(csv_file_path)
+    self.base_audio_dir = base_audio_dir
+    self.tokenizer = tokenizer
+    self.feature_extractor = utils.get_feature_extractor_for_model(feature_extractor_model)
+    self.max_len = max_len
+    self.precision = precision
+    self.audio_files = df[audiocap_id_col].tolist()
+    self.captions = df[caption_col].tolist()
+
+  def __len__(self):
+    return len(self.captions)
+
+  def __getitem__(self,index):
+    audio_file_path = os.path.join(self.base_audio_dir,self.audio_files[index]+".wav")
+    caption = self.captions[index]
+    audio_data, sampling_rate = librosa.load(audio_file_path)
+    audio_features = utils.get_audio_values_for_model(self.feature_extractor,audio_data)
+    tokenized_data = self.tokenizer(
+          caption,
+          return_tensors="pt",
+          padding='max_length',
+          truncation=True,
+          max_length=self.max_len)
+    caption_len = tokenized_data.attention_mask[0].sum()
+    tokens = tokenized_data.input_ids[0]
+    return audio_features, tokens, caption_len
 
 
 class CsvDataset(Dataset):
