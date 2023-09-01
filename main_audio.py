@@ -262,6 +262,8 @@ def train(train_loader, model, tokenizer, criterion, optimizer, epoch, scheduler
    for i,(audio_features,tokenized_caption,caption_len) in enumerate(train_loader):
       audio_features = audio_features.cuda()
       tokenized_caption = tokenized_caption.cuda()
+
+
       
 
 if __name__ == '__main__':

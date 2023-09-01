@@ -158,9 +158,9 @@ class GILLModel(nn.Module):
     self.visual_fc = nn.Linear(hidden_size, self.args.ret_emb_dim)
     self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
 
-  def get_audio_embs(self,audio_data): 
+  def get_audio_embs(self,audio_features): 
     if "clap" in self.audio_model_name:
-      encoder_outputs = self.audio_model.get_audio_features(**audio_data)
+      encoder_outputs = self.audio_model.get_audio_features(**audio_features)
     else:
       raise NotImplemented
 
@@ -210,28 +210,45 @@ class GILLModel(nn.Module):
 
   def forward(
     self,
-    pixel_values: torch.FloatTensor,
+    pixel_values: torch.FloatTensor = None,
     labels: Optional[torch.LongTensor] = None,
     caption_len: Optional[torch.LongTensor] = None,
     mode: str = 'captioning',
     concat_captions: bool = False,
     input_prefix: Optional[str] = None,
+    audio_features = None,
+    tokenized_caption = None
   ):
-    visual_embs = self.get_visual_embs(pixel_values, mode)
+    if pixel_values:
+      visual_embs = self.get_visual_embs(pixel_values, mode)
+      device = visual_embs.device
+      batch_size, vis_seq_len, _ = visual_embs.shape  # vis_seq_len = n_visual_tokens
+      if labels is not None:
+        assert labels.shape[0] == batch_size, (visual_embs.shape, labels.shape)
+      visual_embs_norm = ((visual_embs ** 2).sum(dim=-1) ** 0.5).mean()
 
-    batch_size, vis_seq_len, _ = visual_embs.shape  # vis_seq_len = n_visual_tokens
-    if labels is not None:
-      assert labels.shape[0] == batch_size, (visual_embs.shape, labels.shape)
-    visual_embs_norm = ((visual_embs ** 2).sum(dim=-1) ** 0.5).mean()
+      input_embs = self.input_embeddings(labels)  # (N, T, D)
+      input_embs_norm = ((input_embs ** 2).sum(dim=-1) ** 0.5).mean()
 
-    input_embs = self.input_embeddings(labels)  # (N, T, D)
-    input_embs_norm = ((input_embs ** 2).sum(dim=-1) ** 0.5).mean()
+      last_embedding_idx = caption_len - 1  # -1 to retrieve the token before the eos token
+    
+    if audio_features:
+      audio_embs = self.get_audio_embs(**audio_features)
+      device = audio_embs.device
+      batch_size, audio_seq_len, _ = audio_embs.shape
 
-    last_embedding_idx = caption_len - 1  # -1 to retrieve the token before the eos token
+      if tokenized_caption is not None:
+        assert tokenized_caption.shape[0] == batch_size, (audio_embs.shape, tokenized_caption.shape)
+      audio_embs_norm = ((audio_embs ** 2).sum(dim=-1) ** 0.5).mean()
+
+      input_embs = self.input_embeddings(tokenized_caption)  # (N, T, D)
+      input_embs_norm = ((input_embs ** 2).sum(dim=-1) ** 0.5).mean()
+      last_embedding_idx = caption_len - 1
+
 
     if input_prefix is not None:
       prompt_ids = self.tokenizer(input_prefix, add_special_tokens=False, return_tensors="pt").input_ids
-      prompt_ids = prompt_ids.to(visual_embs.device)
+      prompt_ids = prompt_ids.to(device)
       prompt_embs = self.input_embeddings(prompt_ids)
       prompt_embs = prompt_embs.repeat(batch_size, 1, 1)
       assert prompt_embs.shape[0] == batch_size, prompt_embs.shape
@@ -242,11 +259,19 @@ class GILLModel(nn.Module):
       # Concat to text embeddings.
       condition_seq_len = 0
       if input_prefix is None:
+        if pixel_values:
         # Just add visual embeddings.
-        input_embs = torch.cat([visual_embs, input_embs], axis=1)
-        last_embedding_idx += vis_seq_len
-        condition_seq_len += vis_seq_len
-        full_labels = torch.zeros(visual_embs.shape[:2], dtype=torch.int64).to(visual_embs.device) - 100
+          input_embs = torch.cat([visual_embs, input_embs], axis=1)
+          last_embedding_idx += vis_seq_len
+          condition_seq_len += vis_seq_len
+          full_labels = torch.zeros(visual_embs.shape[:2], dtype=torch.int64).to(visual_embs.device) - 100
+        
+        if audio_features:
+          input_embs = torch.cat([audio_embs, input_embs], axis=1)
+          last_embedding_idx += audio_seq_len
+          condition_seq_len += audio_seq_len
+          full_labels = torch.zeros(audio_embs.shape[:2],dtype=torch.int64).to(audio_embs.device) ## figure out why -100?
+      
       else:
         print(f'Adding prefix "{input_prefix}" to captioning.')
         # Add visual and prompt embeddings.
@@ -255,7 +280,11 @@ class GILLModel(nn.Module):
 
         last_embedding_idx += prefix_embs.shape[1]
         condition_seq_len += prefix_embs.shape[1]
-        full_labels = torch.zeros(prefix_embs.shape[:2], dtype=torch.int64).to(visual_embs.device) - 100
+
+        if pixel_values:
+          full_labels = torch.zeros(prefix_embs.shape[:2], dtype=torch.int64).to(visual_embs.device) - 100
+        if audio_features:
+          full_labels = torch.zeros(prefix_embs.shape[:2], dtype=torch.int64).to(audio_embs.device) ## figure out why -100?
 
       # Mask out embedding tokens in the labels.
       full_labels = torch.cat([full_labels, labels], axis=1)
@@ -671,9 +700,9 @@ class GILL(nn.Module):
           input_ids.append(text_ids)
 
         elif type(p) in [np.ndarray,torch.Tensor,List[np.ndarray],List[torch.Tensor]]:
-          audio_data = utils.get_audio_values_for_model(self.model.feature_extractor_audio,p)
-          audio_data = audio_data.to(device=self.model.logit_scale.device,dtype=self.model.logit_scale.dtype)
-          audio_embs = self.model.get_audio_embs(audio_data)
+          audio_features = utils.get_audio_values_for_model(self.model.feature_extractor_audio,p)
+          audio_features = audio_features.to(device=self.model.logit_scale.device,dtype=self.model.logit_scale.dtype)
+          audio_embs = self.model.get_audio_embs(audio_features)
           input_embs.append(audio_embs)
 
         else:
