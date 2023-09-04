@@ -341,3 +341,9 @@ def validate(val_loader, model, tokenizer, criterion, epoch, args):
 
   # Use top1 accuracy as the metric for keeping the best checkpoint.
   return top1_caption.avg
+
+def validate_for_audiocaps(val_loader, model, tokenizer, criterion, epoch, args):
+  ngpus_per_node = torch.cuda.device_count()
+  writer = SummaryWriter(args.log_dir)
+  bleu_scorers = [BLEUScore(n_gram=i) for i in [1, 2, 3, 4]]
+  

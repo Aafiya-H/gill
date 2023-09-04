@@ -4,17 +4,21 @@ import os
 import random
 import torch
 import warnings
+import time
 
 import pandas as pd
 import torch.nn as nn
 import torch.backends.cudnn as cudnn
 from torch.optim.lr_scheduler import StepLR
 from warmup_scheduler import GradualWarmupScheduler
+from torch.utils.tensorboard import SummaryWriter
+from transformers import AutoTokenizer
 
 from gill import models
 from gill import utils
 from gill import data
-from transformers import AutoTokenizer
+from gill import validate
+
 
 llm_models = ['facebook/opt-125m', 'facebook/opt-350m', 'facebook/opt-1.3b', 'facebook/opt-2.7b',
               'facebook/opt-6.7b', 'facebook/opt-13b', 'facebook/opt-30b', 'facebook/opt-66b']
@@ -44,12 +48,12 @@ def parse_args(args):
    
    parser.add_argument('--epochs', default=90, type=int, metavar='N',
             help='number of total epochs to run')
-   # parser.add_argument('--steps_per_epoch', default=2000, type=int, metavar='N',
-   #          help='number of training steps per epoch')
+   parser.add_argument('--steps_per_epoch', default=2000, type=int, metavar='N',
+            help='number of training steps per epoch')
    # parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
    #          help='manual epoch number (useful on restarts)')
-   # parser.add_argument('--val_steps_per_epoch', default=-1, type=int, metavar='N',
-   #          help='number of validation steps per epoch')
+   parser.add_argument('--val_steps_per_epoch', default=-1, type=int, metavar='N',
+            help='number of validation steps per epoch')
    parser.add_argument('-b', '--batch-size', default=200, type=int,
             metavar='N',
             help='mini-batch size (default: 200), this is the total '
@@ -158,10 +162,10 @@ def main(args):
    # else:
    #    # Simply call main_worker function
    #    main_worker(args.gpu, ngpus_per_node, args)
-   main_worker(args.gpu, ngpus_per_node, args)
+   main_worker(ngpus_per_node, args)
 
 
-def main_worker(gpu, ngpus_per_node, args):
+def main_worker(ngpus_per_node, args):
    model_args = models.GILLArgs()
    model_args.opt_version = args.opt_version
    model_args.visual_encoder = args.visual_model
@@ -192,12 +196,14 @@ def main_worker(gpu, ngpus_per_node, args):
    # tokenizer.add_special_tokens({"cls_token": "<|image|>"})  # add special image token to tokenizer
 
    model = models.GILL(tokenizer,model_args)
+   
+   # for param in ''
    if args.precision == 'fp16':
       model = model.float()
    elif args.precision == 'bf16':
       model = model.bfloat16()
 
-   criterion = nn.CrossEntropyLoss().cuda(args.gpu)
+   criterion = nn.CrossEntropyLoss().cuda()
    optimizer_cls = torch.optim.AdamW
    print('Using torch.optim.AdamW as the optimizer.')
    optimizer = optimizer_cls(model.parameters(), args.lr,
@@ -215,6 +221,13 @@ def main_worker(gpu, ngpus_per_node, args):
       # args.start_epoch = checkpoint["epoch"]
       model.load_state_dict(checkpoint['state_dict'], strict=False)
    
+   params_to_freeze = checkpoint["state_dict"].keys()
+
+   for param_to_freeze in params_to_freeze:
+      for name, param in model.named_parameters():
+         if name == param_to_freeze:
+            param.requires_grad = False
+
    cudnn.benchmark = True
 
    ## Data loading --> to be changed
@@ -239,12 +252,16 @@ def main_worker(gpu, ngpus_per_node, args):
    
    #training loop
    for epoch in range(args.epochs):
-
       #train for 1 epoch
       train(train_loader, model, tokenizer, criterion, optimizer, epoch, scheduler, args)
+
+      acc1 = validate.validate(val_loader, model, tokenizer, criterion, epoch, args)
+      is_best = acc1 > best_acc1
+      best_acc1 = max(acc1, best_acc1)
+
       stripped_state_dict = {
           k: v for k, v in model.state_dict().items() if 
-          ('.lm' not in k and '.visual_model' not in k)
+          ('.lm' not in k and '.visual_model' not in k) # check if more need to be added
       }
       stripped_state_dict = OrderedDict(sorted(stripped_state_dict.items()))
       utils.save_checkpoint({
@@ -257,11 +274,43 @@ def main_worker(gpu, ngpus_per_node, args):
    
 
 def train(train_loader, model, tokenizer, criterion, optimizer, epoch, scheduler, args):
+   ngpus_per_node = torch.cuda.device_count()
+   batch_time = utils.AverageMeter('Time', ':6.3f')
+   cap_time = utils.AverageMeter('CaptioningTime', ':6.3f')
+   data_time = utils.AverageMeter('Data', ':6.3f')
+   losses = utils.AverageMeter('Loss', ':.4e')
+   ce_losses = utils.AverageMeter('CeLoss', ':.4e')
+   cont_losses = utils.AverageMeter('ContLoss', ':.4e')
+   top1_caption = utils.AverageMeter('AccCaption@1', ':6.2f')
+   top5_caption = utils.AverageMeter('AccCaption@5', ':6.2f')
+
+   writer = SummaryWriter(args.log_dir)
+
+   progress = utils.ProgressMeter(
+    args.steps_per_epoch,
+    [batch_time, losses, ce_losses, cont_losses, gen_losses, top1, top5],
+    prefix="Epoch: [{}]".format(epoch))
+   
+   #switch to train mode
    model.train()
+   end = time.time()
 
    for i,(audio_features,tokenized_caption,caption_len) in enumerate(train_loader):
+      actual_step = epoch * args.steps_per_epoch + i + 1
+      # measure data loading time
+      data_time.update(time.time() - end)
+
       audio_features = audio_features.cuda()
       tokenized_caption = tokenized_caption.cuda()
+
+      concat_captions = random.uniform(0, 1) < args.concat_captions_prob ## figure out why caption concatenating is needed?
+      concat_captions = False
+
+      (model_output, full_labels, last_embedding, last_output_logit, audio_embs, 
+      audio_embs_norm, input_embs_norm, llm_hidden_states) = model(audio_features=audio_features, caption_len = caption_len,
+                                                                   concat_captions=concat_captions, tokenized_caption=tokenized_caption)
+
+      output = model_output.logits
 
 
       

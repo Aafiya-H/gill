@@ -243,7 +243,7 @@ class GILLModel(nn.Module):
 
       input_embs = self.input_embeddings(tokenized_caption)  # (N, T, D)
       input_embs_norm = ((input_embs ** 2).sum(dim=-1) ** 0.5).mean()
-      last_embedding_idx = caption_len - 1
+      last_embedding_idx = caption_len - 1  # -1 to retrieve the token before the eos token
 
 
     if input_prefix is not None:
@@ -270,12 +270,16 @@ class GILLModel(nn.Module):
           input_embs = torch.cat([audio_embs, input_embs], axis=1)
           last_embedding_idx += audio_seq_len
           condition_seq_len += audio_seq_len
-          full_labels = torch.zeros(audio_embs.shape[:2],dtype=torch.int64).to(audio_embs.device) ## figure out why -100?
+          full_labels = torch.zeros(audio_embs.shape[:2],dtype=torch.int64).to(audio_embs.device) - 100 ## figure out why -100?
       
       else:
         print(f'Adding prefix "{input_prefix}" to captioning.')
         # Add visual and prompt embeddings.
-        prefix_embs = torch.cat([visual_embs, prompt_embs], axis=1)
+        if pixel_values:
+          prefix_embs = torch.cat([visual_embs, prompt_embs], axis=1)
+        elif audio_features:
+          prefix_embs = torch.cat([audio_embs, prompt_embs], axis=1)
+          
         input_embs = torch.cat([prefix_embs, input_embs], axis=1)
 
         last_embedding_idx += prefix_embs.shape[1]
@@ -284,7 +288,7 @@ class GILLModel(nn.Module):
         if pixel_values:
           full_labels = torch.zeros(prefix_embs.shape[:2], dtype=torch.int64).to(visual_embs.device) - 100
         if audio_features:
-          full_labels = torch.zeros(prefix_embs.shape[:2], dtype=torch.int64).to(audio_embs.device) ## figure out why -100?
+          full_labels = torch.zeros(prefix_embs.shape[:2], dtype=torch.int64).to(audio_embs.device) - 100 ## figure out why -100?
 
       # Mask out embedding tokens in the labels.
       full_labels = torch.cat([full_labels, labels], axis=1)
@@ -513,8 +517,11 @@ class GILLModel(nn.Module):
       pass
     else:
       raise NotImplementedError
-
-    return output, full_labels, last_embedding, last_output_logit, visual_embs, visual_embs_norm, input_embs_norm, llm_hidden_states
+    
+    if pixel_values:
+      return output, full_labels, last_embedding, last_output_logit, visual_embs, visual_embs_norm, input_embs_norm, llm_hidden_states
+    else:
+      return output, full_labels, last_embedding, last_output_logit, audio_embs, audio_embs_norm, input_embs_norm, llm_hidden_states
 
   def generate(self, embeddings = torch.FloatTensor, max_len: int = 32,
                temperature: float = 0.0, top_p: float = 1.0, min_word_tokens: int = 0,
