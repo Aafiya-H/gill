@@ -80,10 +80,11 @@ def parse_args(args):
    parser.add_argument('--grad-clip', default=1.0, type=float, help='gradient clipping amount')
    parser.add_argument('--precision', default='bf16', type=str, choices=['fp32', 'fp16', 'bf16'],
                       help="What precision to train in.")
+   parser.add_argument('--cap-loss-scale', type=float, default=1.0, help="Scale on captioning loss.")
    
    # number of tokens
-   parser.add_argument('--n-visual-tokens', default=4, type=int,
-            metavar='N', help='Number of visual tokens to use for the Frozen model.')
+   # parser.add_argument('--n-visual-tokens', default=4, type=int,
+   #          metavar='N', help='Number of visual tokens to use for the Frozen model.')
    parser.add_argument('--n-audio-tokens',default=4,type=int,
                        metavar='N', help='Number of audio tokens to use for the Frozen model.')
    
@@ -175,7 +176,7 @@ def main_worker(ngpus_per_node, args):
    model_args.freeze_vm = True
    model_args.freeze_am = True
 
-   model_args.n_visual_tokens = args.n_visual_tokens
+   # model_args.n_visual_tokens = args.n_visual_tokens
    model_args.n_audio_tokens = args.n_audio_tokens
 
    # model_args.ret_emb_dim = args.ret_emb_dim
@@ -274,29 +275,36 @@ def main_worker(ngpus_per_node, args):
    
 
 def train(train_loader, model, tokenizer, criterion, optimizer, epoch, scheduler, args):
+   # mode not required because training is only being done for captioning
    ngpus_per_node = torch.cuda.device_count()
    batch_time = utils.AverageMeter('Time', ':6.3f')
    cap_time = utils.AverageMeter('CaptioningTime', ':6.3f')
    data_time = utils.AverageMeter('Data', ':6.3f')
    losses = utils.AverageMeter('Loss', ':.4e')
    ce_losses = utils.AverageMeter('CeLoss', ':.4e')
-   cont_losses = utils.AverageMeter('ContLoss', ':.4e')
-   top1_caption = utils.AverageMeter('AccCaption@1', ':6.2f')
-   top5_caption = utils.AverageMeter('AccCaption@5', ':6.2f')
+   # cont_losses = utils.AverageMeter('ContLoss', ':.4e')
+   top1 = utils.AverageMeter('Acc@1', ':6.2f')
+   top5 = utils.AverageMeter('Acc@5', ':6.2f')
+   cap_audio_emb_norm = utils.AverageMeter('VisualEmbNormCap', ':.4e')
+   inp_emb_norm = utils.AverageMeter('TextEmbNorm', ':.4e')
+   # top1_caption = utils.AverageMeter('AccCaption@1', ':6.2f')
+   # top5_caption = utils.AverageMeter('AccCaption@5', ':6.2f')
 
    writer = SummaryWriter(args.log_dir)
 
    progress = utils.ProgressMeter(
     args.steps_per_epoch,
     [batch_time, losses, ce_losses, cont_losses, gen_losses, top1, top5],
-    prefix="Epoch: [{}]".format(epoch))
+    prefix="Epoch: [{}]".format(epoch)) ## to be changed
    
    #switch to train mode
    model.train()
    end = time.time()
 
    for i,(audio_features,tokenized_caption,caption_len) in enumerate(train_loader):
+      mode_start = time.time()
       actual_step = epoch * args.steps_per_epoch + i + 1
+      loss = 0
       # measure data loading time
       data_time.update(time.time() - end)
 
@@ -311,9 +319,80 @@ def train(train_loader, model, tokenizer, criterion, optimizer, epoch, scheduler
                                                                    concat_captions=concat_captions, tokenized_caption=tokenized_caption)
 
       output = model_output.logits
+      acc1, acc5 = utils.accuracy(output[:, :-1, :], full_labels[:, 1:], -100, topk=(1, 5))
+      top1.update(acc1[0], audio_features.size(0))
+      top5.update(acc5[0], audio_features.size(0))
 
+      ce_loss = model_output.loss
+      ce_loss = ce_loss * args.cap_loss_scale
+      loss += ce_loss
+      ce_losses.update(ce_loss.item(), audio_features.size(0))
+      cap_audio_emb_norm.update(audio_embs_norm.item(),audio_features.size(0))
 
+      inp_emb_norm.update(input_embs_norm.item(), audio_features.size(0))
+      cap_time.update(time.time() - mode_start)
       
+      loss = loss / args.grad_accumulation_steps
+      losses.update(loss.item(), audio_features.size(0))
+      loss.backward()
+
+      #update weights
+      if ((i + 1) % args.grad_accumulation_steps == 0) or (i == args.steps_per_epoch - 1):
+
+         # compute gradient and do SGD step
+         if args.grad_clip > 0:
+            nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
+         optimizer.step()
+         optimizer.zero_grad()
+         print('=' * 80)
+      
+      # measure elapsed time
+      batch_time.update(time.time() - end)
+      end = time.time()
+   
+      if actual_step == 1 or (i + 1) % args.print_freq == 0:
+         ex_per_sec = args.batch_size / batch_time.avg
+         progress.display(i + 1)
+         writer.add_scaler('train/loss', losses.avg, actual_step)
+         writer.add_scalar('train/ce_loss', ce_losses.avg, actual_step)
+         writer.add_scalar('train/cap_audio_emb_norm', cap_audio_emb_norm.avg, actual_step)
+         writer.add_scalar('train/text_emb_norm', inp_emb_norm.avg, actual_step)
+         writer.add_scalar('metrics/total_secs_per_batch', batch_time.avg, actual_step)
+         writer.add_scalar('metrics/total_secs_captioning', cap_time.avg, actual_step)
+         writer.add_scalar('metrics/data_secs_per_batch', data_time.avg, actual_step)
+         writer.add_scalar('metrics/examples_per_sec', ex_per_sec, actual_step)
+
+         audio_features_bs = audio_embs.shape[0]
+         normalized_audio_embs = audio_embs - audio_embs.min()
+         normalized_images /= normalized_images.max()
+
+         pred_tokens = output[:, args.n_audio_tokens-1:-1, :].argmax(dim=-1)
+         generated_captions = tokenizer.batch_decode(pred_tokens, skip_special_tokens=False)
+
+         batch_time.reset()
+         cap_time.reset()
+         data_time.reset()
+         ce_losses.reset()
+         top1.reset()
+         top5.reset()
+         cap_audio_emb_norm.reset()
+         inp_emb_norm.reset()
+         
+      if i == args.steps_per_epoch - 1:
+         break
+
+      scheduler.step()
+      curr_lr = scheduler.get_last_lr()
+      if (actual_step == 1) or (i + 1) % args.print_freq == 0:
+         # Write current learning rate to Tensorboard.
+         writer = SummaryWriter(args.log_dir)
+         writer.add_scalar('train/lr', curr_lr[0], actual_step)
+         writer.close()
+   
+   writer.close()
+
+# Disable tokenizer parallelism.
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 if __name__ == '__main__':
    main(sys.argv[1:])
