@@ -294,7 +294,7 @@ def train(train_loader, model, tokenizer, criterion, optimizer, epoch, scheduler
 
    progress = utils.ProgressMeter(
     args.steps_per_epoch,
-    [batch_time, losses, ce_losses, cont_losses, gen_losses, top1, top5],
+    [batch_time, losses, ce_losses, top1, top5],
     prefix="Epoch: [{}]".format(epoch)) ## to be changed
    
    #switch to train mode
