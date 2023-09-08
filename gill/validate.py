@@ -343,7 +343,160 @@ def validate(val_loader, model, tokenizer, criterion, epoch, args):
   return top1_caption.avg
 
 def validate_for_audiocaps(val_loader, model, tokenizer, criterion, epoch, args):
-  ngpus_per_node = torch.cuda.device_count()
+  # ngpus_per_node = torch.cuda.device_count()
   writer = SummaryWriter(args.log_dir)
   bleu_scorers = [BLEUScore(n_gram=i) for i in [1, 2, 3, 4]]
+  actual_step = (epoch + 1) * args.steps_per_epoch
+  num_words = 32
+
+  def run_validate(loader,base_progress=0):
+    with torch.no_grad():
+      end = time.time()
+      all_generated_captions = []
+      all_gt_captions = []
+      all_generated_audio_paths = []
+      all_audio_features = []
+      all_text_features = []
+
+      for  i, (audio_paths, audio_features, tokenized_caption, caption_len) in tqdm.tqdm(enumerate(loader), position=0, total=len(loader)):
+        i = base_progress + i
+
+        if torch.cuda.is_available():
+          audio_features = audio_features.cuda()
+          tokenized_caption = tokenized_caption.cuda()
+          caption_len = caption_len.cuda()
+        
+        if args.precision == 'fp16':
+          audio_features = audio_features.half()
+        elif args.precision == 'bf16':
+          audio_features = audio_features.bfloat16()
+
+        (model_output, full_labels, last_embedding, last_output_logit, audio_embs, 
+          audio_embs_norm, input_embs_norm, llm_hidden_states) = model(audio_features=audio_features, caption_len = caption_len,
+                                                                   tokenized_caption=tokenized_caption,input_prefix=args.input_prompt)
+      
+        loss = args.cap_loss_scale * model_output.loss
+        output = model_output.logits
+
+        acc1, acc5 = utils.accuracy(output[:, :-1, :], full_labels[:, 1:], -100, topk=(1, 5))
+        top1.update(acc1[0], audio_features.size(0))
+        top5.update(acc5[0], audio_features.size(0))
+        ce_losses.update(loss.item(), audio_features.size(0))
+
+        # Run auto-regressive generation sample
+        min_word_tokens = num_words
+
+        input_embs = model.module.model.get_audio_embs(audio_features)
+        if args.input_prompt is not None:
+          print(f'Adding prefix "{args.input_prompt}" to captioning generate=True.')
+          prompt_ids = tokenizer(args.input_prompt, add_special_tokens=True, return_tensors="pt").input_ids
+          prompt_ids = prompt_ids.to(audio_embs.device)
+          prompt_embs = model.module.model.input_embeddings(prompt_ids)
+          prompt_embs = prompt_embs.repeat(input_embs.shape[0], 1, 1)
+          input_embs = torch.cat([input_embs, prompt_embs], dim=1)
+        
+        generated_ids, _, _ = model(input_embs, tokenized_caption, caption_len,
+                generate=True, num_words=num_words, temperature=0.0, top_p=1.0,
+                min_word_tokens=min_word_tokens)
+        all_tgt_tokens = tokenized_caption
+
+        all_tgt_tokens[all_tgt_tokens == -100] = tokenizer.pad_token_id
+        generated_captions = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
+        gt_captions = tokenizer.batch_decode(all_tgt_tokens, skip_special_tokens=True)
+
+        for cap_i in range(len(generated_captions)):
+          audio_path = audio_paths[i]
+          all_generated_audio_paths.append(audio_path)
+          stop_idx = generated_captions[cap_i].find('.')
+          if stop_idx > 5:
+            all_generated_captions.append(generated_captions[cap_i][:stop_idx])
+          else:
+            all_generated_captions.append(generated_captions[cap_i])
+          all_gt_captions.append([gt_captions[cap_i]])
+      
+        if i == 0:
+          max_to_display = 5
+          print('=' * 30)
+          print('Generated samples:')
+          for cap_i, cap in enumerate(generated_captions[:max_to_display]):
+            print(f'{cap_i}) {cap}')
+          print('=' * 30)
+          print('Real samples:')
+          for cap_i, cap in enumerate(gt_captions[:max_to_display]):
+            print(f'{cap_i}) {cap}')
+          print('=' * 30)
+
+          max_audios_to_show = 16
+          normalized_audios = audio_features - audio_features.min()
+          normalized_audios /= normalized_audios.max()
+
+        audio_emb_norm.update(audio_embs_norm.item(),audio_features.size(0))
+        inp_emb_norm.update(input_embs_norm.item(), audio_features.size(0))
+        
+        batch_time.update(time.time() - end)
+        end = time.time()
+
+        if i % args.print_freq == 0:
+          progress.display(i + 1)
+
+        if i == args.val_steps_per_epoch - 1:
+          break
+      
+      ##from here
+      path2captions = collections.defaultdict(list)
+      for audio_path, caption in zip(all_generated_audio_paths, all_gt_captions):
+        assert len(caption) == 1, caption
+        trunc_cap = caption[0]
+
+        # loop to replace [IMG] tokens not written
+        path2captions[audio_path].append(trunc_cap.strip())
+      full_gt_captions = [path2captions[path] for path in all_generated_audio_paths]
+
+      print(f'Computing BLEU with {len(all_generated_captions)} generated captions:'
+            f'{all_generated_captions[:5]} and {len(full_gt_captions)} groundtruth captions:',
+            f'{full_gt_captions[:5]}.')
+      
+      bleu1_score = bleu_scorers[0](all_generated_captions, full_gt_captions)
+      bleu1.update(bleu1_score, 1)
+      bleu2_score = bleu_scorers[1](all_generated_captions, full_gt_captions)
+      bleu2.update(bleu2_score, 1)
+      bleu3_score = bleu_scorers[2](all_generated_captions, full_gt_captions)
+      bleu3.update(bleu3_score, 2)
+      bleu4_score = bleu_scorers[3](all_generated_captions, full_gt_captions)
+      bleu4.update(bleu4_score, 3)
+
   
+  top1 = utils.AverageMeter('Acc@1', ':6.2f', utils.Summary.AVERAGE)
+  top5 = utils.AverageMeter('Acc@5', ':6.2f', utils.Summary.AVERAGE)
+  ce_losses = utils.AverageMeter('CeLoss', ':.4e', utils.Summary.AVERAGE)
+  audio_emb_norm = utils.AverageMeter('AudioEmbNorm', ':.4e', utils.Summary.AVERAGE)
+  inp_emb_norm = utils.AverageMeter('TextEmbNorm', ':.4e', utils.Summary.AVERAGE)
+  batch_time = utils.AverageMeter('Time', ':6.3f', utils.Summary.AVERAGE)
+  bleu1 = utils.AverageMeter('BLEU@1', ':6.2f', utils.Summary.AVERAGE)
+  bleu2 = utils.AverageMeter('BLEU@2', ':6.2f', utils.Summary.AVERAGE)
+  bleu3 = utils.AverageMeter('BLEU@3', ':6.2f', utils.Summary.AVERAGE)
+  bleu4 = utils.AverageMeter('BLEU@4', ':6.2f', utils.Summary.AVERAGE)
+
+  progress = utils.ProgressMeter(
+    len(val_loader) + (args.distributed and (len(val_loader.sampler) * args.world_size < len(val_loader.dataset))),
+    [batch_time, ce_losses, top1, top5, bleu4],
+    prefix='Test: ')
+  
+  model.eval()
+
+  run_validate(val_loader)
+
+  progress.display_summary()
+
+  writer.add_scalar("val/audio_emb_norm", audio_emb_norm.avg, actual_step)
+  writer.add_scalar("val/text_emb_norm", inp_emb_norm.avg, actual_step)
+  writer.add_scalar('val/total_secs_per_batch', batch_time.avg, actual_step)
+  writer.add_scalar('val/ce_loss', ce_losses.avg, actual_step)
+  writer.add_scalar('val/bleu1', bleu1.avg, actual_step)
+  writer.add_scalar('val/bleu2', bleu2.avg, actual_step)
+  writer.add_scalar('val/bleu3', bleu3.avg, actual_step)
+  writer.add_scalar('val/bleu4', bleu4.avg, actual_step)
+  writer.add_scalar('val/seq_top1_acc', top1.avg, actual_step)
+  writer.add_scalar('val/seq_top5_acc', top5.avg, actual_step)
+
+  writer.close()

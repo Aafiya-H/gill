@@ -12,6 +12,7 @@ import torch.nn.functional as F
 import pickle as pkl
 from PIL import Image, UnidentifiedImageError
 from requests.exceptions import ConnectionError
+from typing import Union
 
 from transformers import AutoTokenizer, AutoModel, CLIPVisionModel, OPTForCausalLM, ClapModel
 from gill import utils
@@ -26,19 +27,18 @@ class GILLArgs:
   visual_encoder: str = 'openai/clip-vit-large-patch14'
   n_visual_tokens: int = 1
   n_audio_tokens: int = 1
-  task: str = 'captioning'
-
+  task: str = 'captioning' # ["image-captioning", "audio-captioning"]
   audio_encoder: str = "laion/clap-htsat-fused"
     
   ret_emb_dim: Optional[int] = 256
   gen_emb_dim: Optional[int] = 256
   text_emb_layers: List[int] = [-1]
-  gen_token_idx: List[int] = [0]
-  retrieval_token_idx: List[int] = [0]
-  text_fc_mode: str = 'gill_mapper'
-  ret_text_fc_mode: str = 'linear'
+  gen_token_idx: Optional[List[int]] = [0]
+  retrieval_token_idx: Optional[List[int]] = [0]
+  text_fc_mode: Optional[str] = 'gill_mapper'
+  ret_text_fc_mode: Optional[str] = 'linear'
   num_tokens: int = 8
-  num_clip_tokens: int = 77
+  num_clip_tokens: Optional[int] = 77
 
 
 class GILLModel(nn.Module):
@@ -555,21 +555,23 @@ class GILLModel(nn.Module):
           logits = logits.cpu()
         output_logits.append(logits)
 
-        # Prevent the model from generating the [IMG1..n] tokens.
-        logits[:, self.retrieval_token_idx[1:]] = filter_value
-        logits[:, self.gen_token_idx[1:]] = filter_value
+        
+        if self.args.task != "audio-captioning":
+          # Prevent the model from generating the [IMG1..n] tokens.
+          logits[:, self.retrieval_token_idx[1:]] = filter_value
+          logits[:, self.gen_token_idx[1:]] = filter_value
 
-        if (self.retrieval_token_idx or self.gen_token_idx) and self.retrieval_token_idx[0] != -1 and self.gen_token_idx[0] != -1:
-          if i < min_word_tokens:
-            # Eliminate probability of generating [IMG] if this is earlier than min_word_tokens.
-            logits[:, self.retrieval_token_idx] = filter_value
-            logits[:, self.gen_token_idx] = filter_value
-          else:
-            # Multiply by scaling factor.
-            if ret_scale_factor > 1:
-              logits[:, self.retrieval_token_idx[0]] = logits[:, self.retrieval_token_idx[0]].abs() * ret_scale_factor
-            if gen_scale_factor > 1:
-              logits[:, self.gen_token_idx[0]] = logits[:, self.gen_token_idx[0]].abs() * gen_scale_factor
+          if (self.retrieval_token_idx or self.gen_token_idx) and self.retrieval_token_idx[0] != -1 and self.gen_token_idx[0] != -1:
+            if i < min_word_tokens:
+              # Eliminate probability of generating [IMG] if this is earlier than min_word_tokens.
+              logits[:, self.retrieval_token_idx] = filter_value
+              logits[:, self.gen_token_idx] = filter_value
+            else:
+              # Multiply by scaling factor.
+              if ret_scale_factor > 1:
+                logits[:, self.retrieval_token_idx[0]] = logits[:, self.retrieval_token_idx[0]].abs() * ret_scale_factor
+              if gen_scale_factor > 1:
+                logits[:, self.gen_token_idx[0]] = logits[:, self.gen_token_idx[0]].abs() * gen_scale_factor
 
         if temperature == 0.0:
           if top_p != 1.0:
@@ -597,12 +599,13 @@ class GILLModel(nn.Module):
           token_weights = logits.exp()   # (N, vocab_size)
           next_token = torch.multinomial(token_weights, 1)  # (N, 1)
 
-        # Force generation of the remaining [IMG] tokens if [IMG0] is generated.
-        if next_token.shape[0] == 1 and next_token.item() == self.retrieval_token_idx[0]:
-          assert self.retrieval_token_idx == self.gen_token_idx, (self.retrieval_token_idx, self.gen_token_idx)
-          next_token = torch.tensor(self.retrieval_token_idx)[None, :].long().to(embeddings.device)  # (1, num_tokens)
-        else:
-          next_token = next_token.long().to(embeddings.device)
+        if self.args.task != "audio-captioning":
+          # Force generation of the remaining [IMG] tokens if [IMG0] is generated.
+          if next_token.shape[0] == 1 and next_token.item() == self.retrieval_token_idx[0]:
+            assert self.retrieval_token_idx == self.gen_token_idx, (self.retrieval_token_idx, self.gen_token_idx)
+            next_token = torch.tensor(self.retrieval_token_idx)[None, :].long().to(embeddings.device)  # (1, num_tokens)
+          else:
+            next_token = next_token.long().to(embeddings.device)
 
         if out is not None:
           out = torch.cat([out, next_token], dim=-1)
@@ -643,24 +646,42 @@ class GILL(nn.Module):
       self.decision_model.load_state_dict(mlp_checkpoint['state_dict'], strict=True)
       self.decision_model.eval()
 
-  def __call__(self, images: Tensor, tgt_tokens: Optional[Tensor] = None, caption_len: Optional[Tensor] = None,
+  def __call__(self, images: Tensor = None, tgt_tokens: Optional[Tensor] = None, caption_len: Optional[Tensor] = None,
                generate: bool = False, num_words: int = 32, temperature: float = 1.0, top_p: float = 1.0,
                ret_scale_factor: float = 1.0, gen_scale_factor: float = 1.0,
                min_word_tokens: int = 0, mode: str = 'captioning', concat_captions: bool = False,
-               input_prefix: Optional[str] = None) -> Tensor:
+               input_prefix: Optional[str] = None,
+               audio_features: Union[np.ndarray,torch.Tensor,List[np.ndarray],List[torch.Tensor]] = None,
+               tokenized_caption: Tensor = None
+               ) -> Tensor:
     if generate:
-      return self.model.generate(images, num_words, temperature=temperature, top_p=top_p,
+      if images:
+        return self.model.generate(images, num_words, temperature=temperature, top_p=top_p,
                                  min_word_tokens=min_word_tokens, ret_scale_factor=ret_scale_factor,
                                  gen_scale_factor=gen_scale_factor)
+      elif audio_features:
+        return self.model.generate(audio_features, num_words, 
+                                   temperature=temperature, top_p=top_p)
     else:
-      output = self.model(
-        pixel_values = images,
-        labels = tgt_tokens,
-        caption_len = caption_len,
-        mode = mode,
-        concat_captions = concat_captions,
-        input_prefix = input_prefix)
-      return output
+      if images:
+        output = self.model(
+          pixel_values = images,
+          labels = tgt_tokens,
+          caption_len = caption_len,
+          mode = mode,
+          concat_captions = concat_captions,
+          input_prefix = input_prefix)
+        return output
+      elif audio_features:
+        output = self.model(
+          audio_features = audio_features,
+          caption_len = caption_len,
+          concat_captions=concat_captions,
+          tokenized_caption=tokenized_caption,
+          input_prefix = input_prefix
+        )
+        return output
+
 
   def generate_for_images_and_texts(
     self, prompts: List, num_words: int = 0, min_word_tokens: int = 0, ret_scale_factor: float = 1.0, gen_scale_factor: float = 1.0,

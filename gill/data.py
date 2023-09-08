@@ -39,7 +39,7 @@ def get_audio_dataset(args, split:str, tokenizer, precision: str = 'fp32') -> Da
       for (path, image_dir) in zip(dataset_paths, audio_data_dirs)
     ])
   else:
-    dataset = AudioCapsDataset(dataset_paths[0],audio_data_dirs,tokenizer,"audiocap_id","caption"
+    dataset = AudioCapsDataset(dataset_paths[0],audio_data_dirs,tokenizer,"audiocap_id","caption",
                                args.audio_model,max_len=args.max_len, precision=args.precision)
   return dataset
 
@@ -119,7 +119,7 @@ class AudioCapsDataset(Dataset):
           max_length=self.max_len)
     caption_len = tokenized_data.attention_mask[0].sum()
     tokens = tokenized_data.input_ids[0]
-    return audio_features, tokens, caption_len
+    return audio_file_path, audio_features, tokens, caption_len
 
 
 class CsvDataset(Dataset):

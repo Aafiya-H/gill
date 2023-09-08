@@ -19,7 +19,6 @@ from gill import utils
 from gill import data
 from gill import validate
 
-
 llm_models = ['facebook/opt-125m', 'facebook/opt-350m', 'facebook/opt-1.3b', 'facebook/opt-2.7b',
               'facebook/opt-6.7b', 'facebook/opt-13b', 'facebook/opt-30b', 'facebook/opt-66b']
 
@@ -31,8 +30,8 @@ def parse_args(args):
                       help='OPT versions: ' +
                         ' | '.join(llm_models) +
                         ' (default: "facebook/opt-125m")')
-   parser.add_argument('--visual-model', default='openai/clip-vit-large-patch14', type=str,
-                      help="Visual encoder to use.")
+   # parser.add_argument('--visual-model', default='openai/clip-vit-large-patch14', type=str,
+   #                    help="Visual encoder to use.")
    parser.add_argument("--audio-encoder",default="laion/clap-htsat-fused",type=str,
                        help="audio encoder to use")
    
@@ -65,7 +64,7 @@ def parse_args(args):
    parser.add_argument('--dataset-dir', default='datasets/AudioCaps', type=str,
             help='Dataset directory containing .csv files.')
    parser.add_argument('--audio-dir', default='datasets/AudioCaps', type=str,
-            help='Dataset directory containing .csv files.')
+            help='Dataset directory containing .wav files.')
    parser.add_argument('--val-batch-size', default=None, type=int)
    parser.add_argument('--lr', '--learning-rate', default=0.001, type=float,
             metavar='LR', help='initial learning rate', dest='lr')
@@ -101,6 +100,7 @@ def parse_args(args):
             help='path to latest checkpoint (default: none)')
    parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
             help='evaluate model on validation set')
+   parser.add_argument('--input-prompt', default='Caption this sound.', type=str, help="Input prompt for the language model, if any.")   
 #    parser.add_argument('--world-size', default=-1, type=int,
 #             help='number of nodes for distributed training')
 #    parser.add_argument('--rank', default=-1, type=int,
@@ -151,6 +151,7 @@ def main(args):
    #    args.world_size = int(os.environ["WORLD_SIZE"])
 
    # args.distributed = args.world_size > 1 or args.multiprocessing_distributed
+   args.distributed = False
 
    ngpus_per_node = torch.cuda.device_count()
    # if args.multiprocessing_distributed:
@@ -169,16 +170,16 @@ def main(args):
 def main_worker(ngpus_per_node, args):
    model_args = models.GILLArgs()
    model_args.opt_version = args.opt_version
-   model_args.visual_encoder = args.visual_model
+   # model_args.visual_encoder = args.visual_model
    model_args.audio_encoder = args.audio_encoder
 
    model_args.freeze_lm = True
-   model_args.freeze_vm = True
+   # model_args.freeze_vm = True
    model_args.freeze_am = True
 
    # model_args.n_visual_tokens = args.n_visual_tokens
    model_args.n_audio_tokens = args.n_audio_tokens
-
+   model_args.task = "audio-captioning"
    # model_args.ret_emb_dim = args.ret_emb_dim
    # model_args.gen_emb_dim = args.gen_emb_dim
    # model_args.text_fc_mode = args.text_fc_mode
@@ -256,13 +257,12 @@ def main_worker(ngpus_per_node, args):
       #train for 1 epoch
       train(train_loader, model, tokenizer, criterion, optimizer, epoch, scheduler, args)
 
-      acc1 = validate.validate(val_loader, model, tokenizer, criterion, epoch, args)
+      acc1 = validate.validate_for_audiocaps(val_loader, model, tokenizer, criterion, epoch, args)
       is_best = acc1 > best_acc1
       best_acc1 = max(acc1, best_acc1)
-
       stripped_state_dict = {
           k: v for k, v in model.state_dict().items() if 
-          ('.lm' not in k and '.visual_model' not in k) # check if more need to be added
+          ('.lm' not in k and '.visual_model' not in k and ".audio_model" not in k) # check if more need to be added
       }
       stripped_state_dict = OrderedDict(sorted(stripped_state_dict.items()))
       utils.save_checkpoint({
@@ -301,7 +301,7 @@ def train(train_loader, model, tokenizer, criterion, optimizer, epoch, scheduler
    model.train()
    end = time.time()
 
-   for i,(audio_features,tokenized_caption,caption_len) in enumerate(train_loader):
+   for i,(_,audio_features,tokenized_caption,caption_len) in enumerate(train_loader):
       mode_start = time.time()
       actual_step = epoch * args.steps_per_epoch + i + 1
       loss = 0
@@ -395,4 +395,5 @@ def train(train_loader, model, tokenizer, criterion, optimizer, epoch, scheduler
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 if __name__ == '__main__':
+   print("Hereeeee")
    main(sys.argv[1:])
