@@ -500,3 +500,4 @@ def validate_for_audiocaps(val_loader, model, tokenizer, criterion, epoch, args)
   writer.add_scalar('val/seq_top5_acc', top5.avg, actual_step)
 
   writer.close()
+  return top1.avg
