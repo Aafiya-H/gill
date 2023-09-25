@@ -18,15 +18,16 @@ from gill import models
 
 
 # Path containing the VIST images.
-vist_image_dir = 'sis/val_images/'
+vist_image_dir = 'datasets/sis/test_images/'
 # Path containing the formatted VIST annotations.
-vist_data_path = 'sis/val_formatted.json'
+vist_data_path = 'datasets/sis/test_formatted.json'
 
 
 if __name__ == '__main__':
     output_dir = sys.argv[1]
     os.makedirs(output_dir, exist_ok=True)
     print('Saving to', output_dir)
+    print(os.path.exists(output_dir))
 
     model = models.load_gill('checkpoints/gill_opt/', load_ret_embs=False)
     g_cuda = torch.Generator(device='cuda').manual_seed(42)  # Fix the random seed.

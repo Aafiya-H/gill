@@ -8,16 +8,16 @@ from gill import utils
 # Download the Visual Storytelling SIS dataset from https://visionandlanguage.net/VIST/json_files/story-in-sequence/SIS-with-labels.tar.gz
 # Extract the files (there should be three sets: train, val, and test).
 # We use the val set for reporting results.
-vist_val_json_path = 'sis/val.story-in-sequence.json'
+vist_json_path = 'datasets/sis/test.story-in-sequence.json'
 # Output directory to save images.
-output_dir = 'sis/val_images/'
+output_dir = 'datasets/sis/test_images'
 os.makedirs(output_dir, exist_ok=True)
 # Path to save formatted annotations to.
-val_formatted_path = 'sis/val_formatted.json'
+formatted_path = 'datasets/sis/test_formatted.json'
 
 if __name__ == '__main__':
     # Load VIST data.
-    with open(vist_val_json_path, 'r') as f:
+    with open(vist_json_path, 'r') as f:
         vist_data_raw = json.load(f)
     # Format into a dictionary of {story_id: data} items.
     vist_data = {
@@ -38,7 +38,7 @@ if __name__ == '__main__':
 
     used_image_ids = set(used_image_ids)
     # Save formatted annotations.
-    with open(val_formatted_path, 'w') as wf:
+    with open(formatted_path, 'w') as wf:
         json.dump(vist_data, wf)
 
     # Map image ids to urls.
