@@ -6,7 +6,6 @@ venv
 runs/
 data/
 datasets/
-checkpoints/gill_opt/*.tar
 checkpoints/gill_opt/cc3m_embeddings_urls.npy
 datasets/
 sin_100.wav
