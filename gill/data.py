@@ -28,7 +28,7 @@ def get_audio_dataset(args, split:str, tokenizer, precision: str = 'fp32') -> Da
 
   if "audiocaps" in args.dataset:
     dataset_paths.append(os.path.join(args.dataset_dir,f'{split}.csv'))
-    audio_data_dirs.append(os.path.join(args.image_dir, f'{split}'))
+    audio_data_dirs.append(os.path.join(args.audio_dir, f'{split}'))
   else:
     NotImplementedError
   
@@ -39,7 +39,7 @@ def get_audio_dataset(args, split:str, tokenizer, precision: str = 'fp32') -> Da
       for (path, image_dir) in zip(dataset_paths, audio_data_dirs)
     ])
   else:
-    dataset = AudioCapsDataset(dataset_paths[0],audio_data_dirs,tokenizer,"audiocap_id","caption",
+    dataset = AudioCapsDataset(dataset_paths[0],audio_data_dirs[0],tokenizer,"audiocap_id","caption",
                                args.audio_model,max_len=args.max_len, precision=args.precision)
   return dataset
 
@@ -107,7 +107,8 @@ class AudioCapsDataset(Dataset):
     return len(self.captions)
 
   def __getitem__(self,index):
-    audio_file_path = os.path.join(self.base_audio_dir,self.audio_files[index]+".wav")
+    # audio_file_path = os.path.join(self.base_audio_dir,str(self.audio_files[index])+".wav")
+    audio_file_path = os.path.join(self.base_audio_dir,"0.wav")
     caption = self.captions[index]
     audio_data, sampling_rate = librosa.load(audio_file_path)
     audio_features = utils.get_audio_values_for_model(self.feature_extractor,audio_data)

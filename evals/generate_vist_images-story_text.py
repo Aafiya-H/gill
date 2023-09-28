@@ -58,10 +58,10 @@ if __name__ == '__main__':
                 caption = captions[i]
                 input_data.append(caption)
 
-                if i < len(captions) - 1:  # Use first n-1 images
-                    with open(image_paths[i], 'rb') as f:
-                        img = Image.open(f).convert('RGB').resize((224, 224))
-                        input_data.append(img)
+                # if i < len(captions) - 1:  # Use first n-1 images
+                #     with open(image_paths[i], 'rb') as f:
+                #         img = Image.open(f).convert('RGB').resize((224, 224))
+                #         input_data.append(img)
 
             # Print outputs for first 3 examples as a sanity check.
             if story_idx < 3:

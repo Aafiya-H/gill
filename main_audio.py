@@ -25,14 +25,14 @@ llm_models = ['facebook/opt-125m', 'facebook/opt-350m', 'facebook/opt-1.3b', 'fa
 
 def parse_args(args):
    parser = argparse.ArgumentParser(description="Audio Caption training in GILL")
-   parser.add_argument('--opt-version', default='facebook/opt-125m',
+   parser.add_argument('--opt-version', default='facebook/opt-6.7b',
                       choices=llm_models,
                       help='OPT versions: ' +
                         ' | '.join(llm_models) +
-                        ' (default: "facebook/opt-125m")')
+                        ' (default: "facebook/opt-6.7b")')
    # parser.add_argument('--visual-model', default='openai/clip-vit-large-patch14', type=str,
    #                    help="Visual encoder to use.")
-   parser.add_argument("--audio-encoder",default="laion/clap-htsat-fused",type=str,
+   parser.add_argument("--audio-model",default="laion/clap-htsat-fused",type=str,
                        help="audio encoder to use")
    
    # parser.add_argument('--num-clip-tokens', default=77, type=int, metavar='N', help='Number of CLIP token to use for generation.')
@@ -51,8 +51,8 @@ def parse_args(args):
             help='number of training steps per epoch')
    # parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
    #          help='manual epoch number (useful on restarts)')
-   parser.add_argument('--val_steps_per_epoch', default=-1, type=int, metavar='N',
-            help='number of validation steps per epoch')
+   # parser.add_argument('--val_steps_per_epoch', default=-1, type=int, metavar='N',
+   #          help='number of validation steps per epoch')
    parser.add_argument('-b', '--batch-size', default=200, type=int,
             metavar='N',
             help='mini-batch size (default: 200), this is the total '
@@ -86,6 +86,8 @@ def parse_args(args):
    #          metavar='N', help='Number of visual tokens to use for the Frozen model.')
    parser.add_argument('--n-audio-tokens',default=4,type=int,
                        metavar='N', help='Number of audio tokens to use for the Frozen model.')
+   parser.add_argument('--max-len', default=32, type=int,
+            metavar='N', help='Maximum length to truncate captions / generations to.')
    
    parser.add_argument('--beta1', default=0.9, type=float, metavar='M',
             help='beta1 for Adam')
@@ -109,8 +111,8 @@ def parse_args(args):
 #             help='url used to set up distributed training')
 #    parser.add_argument('--dist-backend', default='nccl', type=str,
 #             help='distributed backend')
-#    parser.add_argument('--seed', default=None, type=int,
-#             help='seed for initializing training. ')
+   parser.add_argument('--seed', default=None, type=int,
+            help='seed for initializing training. ')
 #    parser.add_argument('--gpu', default=None, type=int,
 #             help='GPU id to use.')
 #    parser.add_argument('--multiprocessing-distributed', action='store_true',
@@ -123,9 +125,11 @@ def parse_args(args):
 
 def main(args):
    args = parse_args(args)
+   i = 1
    args.log_dir = os.path.join(args.log_base_dir, args.exp_name)
    while os.path.exists(args.log_dir):
       args.log_dir = os.path.join(args.log_base_dir, f'{args.exp_name}_{i}')
+      i += 1
    os.makedirs(args.log_dir)
 
    with open(os.path.join(args.log_dir, f'git_info.txt'), 'w') as wf:
@@ -171,7 +175,7 @@ def main_worker(ngpus_per_node, args):
    model_args = models.GILLArgs()
    model_args.opt_version = args.opt_version
    # model_args.visual_encoder = args.visual_model
-   model_args.audio_encoder = args.audio_encoder
+   model_args.audio_encoder = args.audio_model
 
    model_args.freeze_lm = True
    # model_args.freeze_vm = True
@@ -223,18 +227,18 @@ def main_worker(ngpus_per_node, args):
       # args.start_epoch = checkpoint["epoch"]
       model.load_state_dict(checkpoint['state_dict'], strict=False)
    
-   params_to_freeze = checkpoint["state_dict"].keys()
+   # params_to_freeze = checkpoint["state_dict"].keys()
 
-   for param_to_freeze in params_to_freeze:
-      for name, param in model.named_parameters():
-         if name == param_to_freeze:
-            param.requires_grad = False
+   # for param_to_freeze in params_to_freeze:
+   #    for name, param in model.named_parameters():
+   #       if name == param_to_freeze:
+   #          param.requires_grad = False
 
    cudnn.benchmark = True
 
    ## Data loading --> to be changed
-   train_audio_df = pd.read_csv("gill/datasets/AudioCaps/train.csv")
-   root_train = "gill/datasets/AudioCaps/train"
+   train_audio_df = pd.read_csv("datasets/AudioCaps/train.csv")
+   root_train = "datasets/AudioCaps/train"
    downloaded_train_audio_df = pd.DataFrame()
    for audio_file_name in os.listdir(root_train):
       if audio_file_name[-4:] != ".wav":
