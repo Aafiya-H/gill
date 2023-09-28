@@ -1013,3 +1013,4 @@ def load_gill(model_dir: str, load_ret_embs: bool = True) -> GILL:
     model.emb_matrix = emb_matrix
 
   return model
+
