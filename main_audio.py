@@ -53,7 +53,7 @@ def parse_args(args):
    #          help='manual epoch number (useful on restarts)')
    # parser.add_argument('--val_steps_per_epoch', default=-1, type=int, metavar='N',
    #          help='number of validation steps per epoch')
-   parser.add_argument('-b', '--batch-size', default=200, type=int,
+   parser.add_argument('-b', '--batch-size', default=2, type=int,
             metavar='N',
             help='mini-batch size (default: 200), this is the total '
             'batch size of all GPUs on the current node when '
@@ -312,10 +312,10 @@ def train(train_loader, model, tokenizer, criterion, optimizer, epoch, scheduler
       # measure data loading time
       data_time.update(time.time() - end)
 
-      audio_features = audio_features.cuda()
+      audio_features["input_features"] = audio_features["input_features"].cuda()
       tokenized_caption = tokenized_caption.cuda()
 
-      concat_captions = random.uniform(0, 1) < args.concat_captions_prob ## figure out why caption concatenating is needed?
+      # concat_captions = random.uniform(0, 1) < args.concat_captions_prob ## figure out why caption concatenating is needed?
       concat_captions = False
 
       (model_output, full_labels, last_embedding, last_output_logit, audio_embs, 

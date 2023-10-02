@@ -108,7 +108,7 @@ class AudioCapsDataset(Dataset):
 
   def __getitem__(self,index):
     # audio_file_path = os.path.join(self.base_audio_dir,str(self.audio_files[index])+".wav")
-    audio_file_path = os.path.join(self.base_audio_dir,"0.wav")
+    audio_file_path = os.path.join(self.base_audio_dir,"270.wav")
     caption = self.captions[index]
     audio_data, sampling_rate = librosa.load(audio_file_path)
     audio_features = utils.get_audio_values_for_model(self.feature_extractor,audio_data)

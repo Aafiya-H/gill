@@ -23,7 +23,7 @@ class GILLArgs:
   freeze_lm: bool = True
   freeze_vm: bool = True
   freeze_am: bool = True
-  opt_version: str = 'facebook/opt-125m'
+  opt_version: str = 'facebook/opt-6.7b'
   visual_encoder: str = 'openai/clip-vit-large-patch14'
   n_visual_tokens: int = 1
   n_audio_tokens: int = 1
@@ -72,7 +72,7 @@ class GILLModel(nn.Module):
       print("Freezing the audio model")
       self.audio_model.eval()
       for param in self.audio_model.parameters():
-        param.requires_grad = True
+        param.requires_grad = False
     else:
       self.audio_model.train()
 
@@ -160,7 +160,13 @@ class GILLModel(nn.Module):
 
   def get_audio_embs(self,audio_features): 
     if "clap" in self.audio_model_name:
-      encoder_outputs = self.audio_model.get_audio_features(**audio_features)
+      # encoder_outputs = self.audio_model.get_audio_features(**audio_features)
+      x = audio_features.input_features
+      x = x.squeeze(0)
+      self.audio_model = self.audio_model.cuda()
+      # encoder_outputs = self.audio_model.get_audio_features(**audio_features)
+      is_none = self.audio_model.cuda()
+      encoder_outputs = self.audio_model.cuda().get_audio_features(x)
     else:
       raise NotImplemented
 
@@ -205,7 +211,7 @@ class GILLModel(nn.Module):
     if self.args.freeze_vm:
       self.visual_model.eval()
     if self.args.freeze_am:
-      self.args.audio_model.eval()
+      self.audio_model.eval()
 
 
   def forward(
@@ -233,7 +239,7 @@ class GILLModel(nn.Module):
       last_embedding_idx = caption_len - 1  # -1 to retrieve the token before the eos token
     
     if audio_features:
-      audio_embs = self.get_audio_embs(**audio_features)
+      audio_embs = self.get_audio_embs(audio_features)
       device = audio_embs.device
       batch_size, audio_seq_len, _ = audio_embs.shape
 
@@ -672,7 +678,7 @@ class GILL(nn.Module):
           concat_captions = concat_captions,
           input_prefix = input_prefix)
         return output
-      elif audio_features:
+      elif audio_features != None:
         output = self.model(
           audio_features = audio_features,
           caption_len = caption_len,

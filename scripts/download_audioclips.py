@@ -5,6 +5,7 @@ import os
 import argparse
 
 def download_audiocaps(split):
+    print("Split :",split)
     df = pd.read_csv(f"datasets/AudioCaps/{split}.csv")
 
     root_path = f"datasets/AudioCaps/{split}"
