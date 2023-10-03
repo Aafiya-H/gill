@@ -79,7 +79,7 @@ class GILLModel(nn.Module):
     self.audio_model_name = audio_encoder 
 
     if 'facebook/opt' in opt_version:
-      self.lm = OPTForCausalLM.from_pretrained(opt_version)
+      self.lm = OPTForCausalLM.from_pretrained(opt_version).cuda()
     else:
       raise NotImplementedError
 
@@ -160,16 +160,11 @@ class GILLModel(nn.Module):
 
   def get_audio_embs(self,audio_features): 
     if "clap" in self.audio_model_name:
-      # encoder_outputs = self.audio_model.get_audio_features(**audio_features)
-      x = audio_features.input_features
-      x = x.squeeze(0)
       self.audio_model = self.audio_model.cuda()
-      # encoder_outputs = self.audio_model.get_audio_features(**audio_features)
-      is_none = self.audio_model.cuda()
-      encoder_outputs = self.audio_model.cuda().get_audio_features(x)
+      encoder_outputs = self.audio_model.get_audio_features(**audio_features)
     else:
       raise NotImplemented
-
+    self.audio_embeddings = self.audio_embeddings.cuda()
     audio_embs = self.audio_embeddings(encoder_outputs)
     audio_embs = torch.reshape(audio_embs, (audio_embs.shape[0], self.args.n_audio_tokens, -1)) 
     print("Audio embs shape (captioning) :",audio_embs.size())
@@ -246,7 +241,7 @@ class GILLModel(nn.Module):
       if tokenized_caption is not None:
         assert tokenized_caption.shape[0] == batch_size, (audio_embs.shape, tokenized_caption.shape)
       audio_embs_norm = ((audio_embs ** 2).sum(dim=-1) ** 0.5).mean()
-
+      self.input_embeddings = self.input_embeddings.cuda()
       input_embs = self.input_embeddings(tokenized_caption)  # (N, T, D)
       input_embs_norm = ((input_embs ** 2).sum(dim=-1) ** 0.5).mean()
       last_embedding_idx = caption_len - 1  # -1 to retrieve the token before the eos token
@@ -297,7 +292,8 @@ class GILLModel(nn.Module):
           full_labels = torch.zeros(prefix_embs.shape[:2], dtype=torch.int64).to(audio_embs.device) - 100 ## figure out why -100?
 
       # Mask out embedding tokens in the labels.
-      full_labels = torch.cat([full_labels, labels], axis=1)
+      if labels != None:
+        full_labels = torch.cat([full_labels, labels], axis=1)
 
       pad_idx = []
 

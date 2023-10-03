@@ -7,7 +7,7 @@
         {
             "name": "Python: Current File",
             "type": "python",
-            "pythonPath":"../../../../mnt/media/wiseyak/reasoning/bin/python",
+            "python":"../../../../mnt/media/wiseyak/reasoning/bin/python3",
             "request": "launch",
             "program": "main_audio.py",
             "console": "integratedTerminal",

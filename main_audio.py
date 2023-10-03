@@ -77,7 +77,7 @@ def parse_args(args):
    parser.add_argument('--grad-accumulation-steps', default=1, type=int, metavar='N',
                     help='number of gradient accumulation steps')
    parser.add_argument('--grad-clip', default=1.0, type=float, help='gradient clipping amount')
-   parser.add_argument('--precision', default='bf16', type=str, choices=['fp32', 'fp16', 'bf16'],
+   parser.add_argument('--precision', default='fp16', type=str, choices=['fp32', 'fp16', 'bf16'],
                       help="What precision to train in.")
    parser.add_argument('--cap-loss-scale', type=float, default=1.0, help="Scale on captioning loss.")
    
@@ -312,7 +312,7 @@ def train(train_loader, model, tokenizer, criterion, optimizer, epoch, scheduler
       # measure data loading time
       data_time.update(time.time() - end)
 
-      audio_features["input_features"] = audio_features["input_features"].cuda()
+      audio_features["input_features"] = audio_features["input_features"].squeeze(0).cuda()
       tokenized_caption = tokenized_caption.cuda()
 
       # concat_captions = random.uniform(0, 1) < args.concat_captions_prob ## figure out why caption concatenating is needed?
@@ -399,5 +399,4 @@ def train(train_loader, model, tokenizer, criterion, optimizer, epoch, scheduler
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 if __name__ == '__main__':
-   print("Hereeeee")
    main(sys.argv[1:])
