@@ -14,8 +14,8 @@
             "justMyCode": true,
             "args": [
                 "--opt-version","facebook/opt-125m",
-                "--epochs","90",
-                "--batch-size","1",
+                "--epochs","5",
+                "--batch-size","2",
             ]
         }
     ]

@@ -312,7 +312,7 @@ def train(train_loader, model, tokenizer, criterion, optimizer, epoch, scheduler
       # measure data loading time
       data_time.update(time.time() - end)
 
-      audio_features["input_features"] = audio_features["input_features"].squeeze(0).cuda()
+      audio_features["input_features"] = audio_features["input_features"].squeeze(1).cuda()
       tokenized_caption = tokenized_caption.cuda()
 
       # concat_captions = random.uniform(0, 1) < args.concat_captions_prob ## figure out why caption concatenating is needed?

@@ -161,6 +161,8 @@ class GILLModel(nn.Module):
   def get_audio_embs(self,audio_features): 
     if "clap" in self.audio_model_name:
       self.audio_model = self.audio_model.cuda()
+      # if len(audio_features["input_features"].shape) != 4:
+      #   audio_features["input_features"] = audio_features["input_features"].squeeze()
       encoder_outputs = self.audio_model.get_audio_features(**audio_features)
     else:
       raise NotImplemented
@@ -330,7 +332,7 @@ class GILLModel(nn.Module):
           second_labels = full_labels[second_idx, :pad_idx[second_idx]]
           second_padding = input_embs[second_idx, pad_idx[second_idx]:, :]
           second_labels_padding = full_labels[second_idx, pad_idx[second_idx]:]
-          bos_idx = visual_embs.shape[1]
+          bos_idx = audio_embs.shape[1]
 
           assert torch.all(first_labels_padding == -100), first_labels_padding
           assert torch.all(second_labels_padding == -100), second_labels_padding

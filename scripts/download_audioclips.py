@@ -14,6 +14,8 @@ def download_audiocaps(split):
 
     for index, row in tqdm(df.iterrows(), total=len(df)):
         target_file_path = os.path.join(root_path, str(row["audiocap_id"]) + ".wav")
+        if os.path.exists(target_file_path):
+            continue
         start_seconds = row["start_time"]
         yt_id = row["youtube_id"]
         os.system(f'yt-dlp -x --audio-format wav --audio-quality 5 --output "{target_file_path}" --postprocessor-args "-ss {start_seconds} -to {start_seconds+10}" https://www.youtube.com/watch?v={yt_id}')
