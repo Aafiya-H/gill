@@ -11,12 +11,21 @@
             "request": "launch",
             "program": "main_audio.py",
             "console": "integratedTerminal",
-            "justMyCode": true,
+            "justMyCode": false,
             "args": [
                 "--opt-version","facebook/opt-125m",
                 "--epochs","5",
-                "--batch-size","2",
+                "--batch-size","4",
             ]
+        },
+        {
+            "name": "evaluate",
+            "type": "python",
+            "python":"../../../../mnt/media/wiseyak/reasoning/bin/python3",
+            "request": "launch",
+            "program": "evals/generate_vist_images_last_sis_text.py",
+            "console": "integratedTerminal",
+            "justMyCode": false
         }
     ]
 }

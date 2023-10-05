@@ -324,20 +324,20 @@ def train(train_loader, model, tokenizer, criterion, optimizer, epoch, scheduler
 
       output = model_output.logits
       acc1, acc5 = utils.accuracy(output[:, :-1, :], full_labels[:, 1:], -100, topk=(1, 5))
-      top1.update(acc1[0], audio_features.size(0))
-      top5.update(acc5[0], audio_features.size(0))
+      top1.update(acc1[0], audio_features["input_features"].size(0))
+      top5.update(acc5[0], audio_features["input_features"].size(0))
 
       ce_loss = model_output.loss
       ce_loss = ce_loss * args.cap_loss_scale
       loss += ce_loss
-      ce_losses.update(ce_loss.item(), audio_features.size(0))
-      cap_audio_emb_norm.update(audio_embs_norm.item(),audio_features.size(0))
+      ce_losses.update(ce_loss.item(), audio_features["input_features"].size(0))
+      cap_audio_emb_norm.update(audio_embs_norm.item(),audio_features["input_features"].size(0))
 
-      inp_emb_norm.update(input_embs_norm.item(), audio_features.size(0))
+      inp_emb_norm.update(input_embs_norm.item(), audio_features["input_features"].size(0))
       cap_time.update(time.time() - mode_start)
       
       loss = loss / args.grad_accumulation_steps
-      losses.update(loss.item(), audio_features.size(0))
+      losses.update(loss.item(), audio_features["input_features"].size(0))
       loss.backward()
 
       #update weights

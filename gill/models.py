@@ -296,6 +296,9 @@ class GILLModel(nn.Module):
       # Mask out embedding tokens in the labels.
       if labels != None:
         full_labels = torch.cat([full_labels, labels], axis=1)
+        
+      if tokenized_caption != None:
+        full_labels = torch.cat([full_labels, tokenized_caption], axis=1)
 
       pad_idx = []
 
@@ -353,9 +356,9 @@ class GILLModel(nn.Module):
         print("Concatenated full_labels:", full_labels[0, ...])
         assert input_embs.shape == (bs // 2, seq_len * 2 - 1, embs_dim), input_embs.shape
         assert full_labels.shape == (bs // 2, seq_len * 2 - 1), full_labels.shape
-
+      
       output = self.lm(inputs_embeds=input_embs,
-                       labels=full_labels,
+                       labels=full_labels, #shape should be 2,36
                        output_hidden_states=True)
     elif mode in ['retrieval', 'generation']:
       full_labels = torch.clone(labels)

@@ -24,7 +24,7 @@ vist_data_path = 'datasets/sis/test_formatted.json'
 
 
 if __name__ == '__main__':
-    output_dir = sys.argv[1]
+    output_dir = "outputs/last_sis_text/"
     os.makedirs(output_dir, exist_ok=True)
     print('Saving to', output_dir)
     print(os.path.exists(output_dir))
