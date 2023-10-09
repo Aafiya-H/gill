@@ -613,6 +613,8 @@ class GILLModel(nn.Module):
             next_token = torch.tensor(self.retrieval_token_idx)[None, :].long().to(embeddings.device)  # (1, num_tokens)
           else:
             next_token = next_token.long().to(embeddings.device)
+        else:
+          next_token = next_token.long().to(embeddings.device)
 
         if out is not None:
           out = torch.cat([out, next_token], dim=-1)
@@ -662,13 +664,13 @@ class GILL(nn.Module):
                tokenized_caption: Tensor = None
                ) -> Tensor:
     if generate:
-      if images:
+      if images != None:
         return self.model.generate(images, num_words, temperature=temperature, top_p=top_p,
                                  min_word_tokens=min_word_tokens, ret_scale_factor=ret_scale_factor,
                                  gen_scale_factor=gen_scale_factor)
-      elif audio_features:
-        return self.model.generate(audio_features, num_words, 
-                                   temperature=temperature, top_p=top_p)
+      elif audio_features != None:
+        return self.model.generate(audio_features, num_words, temperature=temperature, 
+                                   top_p=top_p,min_word_tokens=min_word_tokens)
     else:
       if images:
         output = self.model(

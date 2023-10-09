@@ -360,16 +360,17 @@ def validate_for_audiocaps(val_loader, model, tokenizer, criterion, epoch, args)
 
       for  i, (audio_paths, audio_features, tokenized_caption, caption_len) in tqdm.tqdm(enumerate(loader), position=0, total=len(loader)):
         i = base_progress + i
+        audio_features["input_features"] = audio_features["input_features"].squeeze(1)
 
         if torch.cuda.is_available():
-          audio_features = audio_features.cuda()
+          audio_features["input_features"] = audio_features["input_features"].cuda()
           tokenized_caption = tokenized_caption.cuda()
           caption_len = caption_len.cuda()
         
-        if args.precision == 'fp16':
-          audio_features = audio_features.half()
-        elif args.precision == 'bf16':
-          audio_features = audio_features.bfloat16()
+        # if args.precision == 'fp16':
+        #   audio_features = audio_features.half()
+        # elif args.precision == 'bf16':
+        #   audio_features = audio_features.bfloat16()
 
         (model_output, full_labels, last_embedding, last_output_logit, audio_embs, 
           audio_embs_norm, input_embs_norm, llm_hidden_states) = model(audio_features=audio_features, caption_len = caption_len,
@@ -379,23 +380,23 @@ def validate_for_audiocaps(val_loader, model, tokenizer, criterion, epoch, args)
         output = model_output.logits
 
         acc1, acc5 = utils.accuracy(output[:, :-1, :], full_labels[:, 1:], -100, topk=(1, 5))
-        top1.update(acc1[0], audio_features.size(0))
-        top5.update(acc5[0], audio_features.size(0))
-        ce_losses.update(loss.item(), audio_features.size(0))
+        top1.update(acc1[0], audio_features["input_features"].size(0))
+        top5.update(acc5[0], audio_features["input_features"].size(0))
+        ce_losses.update(loss.item(), audio_features["input_features"].size(0))
 
         # Run auto-regressive generation sample
         min_word_tokens = num_words
 
-        input_embs = model.module.model.get_audio_embs(audio_features)
+        input_embs = model.model.get_audio_embs(audio_features)
         if args.input_prompt is not None:
           print(f'Adding prefix "{args.input_prompt}" to captioning generate=True.')
           prompt_ids = tokenizer(args.input_prompt, add_special_tokens=True, return_tensors="pt").input_ids
           prompt_ids = prompt_ids.to(audio_embs.device)
-          prompt_embs = model.module.model.input_embeddings(prompt_ids)
+          prompt_embs = model.model.input_embeddings(prompt_ids)
           prompt_embs = prompt_embs.repeat(input_embs.shape[0], 1, 1)
           input_embs = torch.cat([input_embs, prompt_embs], dim=1)
         
-        generated_ids, _, _ = model(input_embs, tokenized_caption, caption_len,
+        generated_ids, _, _ = model(audio_features=input_embs,tokenized_caption=tokenized_caption, caption_len=caption_len,
                 generate=True, num_words=num_words, temperature=0.0, top_p=1.0,
                 min_word_tokens=min_word_tokens)
         all_tgt_tokens = tokenized_caption
@@ -427,11 +428,11 @@ def validate_for_audiocaps(val_loader, model, tokenizer, criterion, epoch, args)
           print('=' * 30)
 
           max_audios_to_show = 16
-          normalized_audios = audio_features - audio_features.min()
-          normalized_audios /= normalized_audios.max()
+          normalized_audios = audio_features["input_features"] - audio_features["input_features"].min()
+          normalized_audios /= audio_features["input_features"].max()
 
-        audio_emb_norm.update(audio_embs_norm.item(),audio_features.size(0))
-        inp_emb_norm.update(input_embs_norm.item(), audio_features.size(0))
+        audio_emb_norm.update(audio_embs_norm.item(),audio_features["input_features"].size(0))
+        inp_emb_norm.update(input_embs_norm.item(), audio_features["input_features"].size(0))
         
         batch_time.update(time.time() - end)
         end = time.time()

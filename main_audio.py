@@ -8,6 +8,8 @@ import time
 
 import pandas as pd
 import torch.nn as nn
+from tqdm import tqdm
+from collections import OrderedDict
 import torch.backends.cudnn as cudnn
 from torch.optim.lr_scheduler import StepLR
 from warmup_scheduler import GradualWarmupScheduler
@@ -21,7 +23,7 @@ from gill import validate
 
 llm_models = ['facebook/opt-125m', 'facebook/opt-350m', 'facebook/opt-1.3b', 'facebook/opt-2.7b',
               'facebook/opt-6.7b', 'facebook/opt-13b', 'facebook/opt-30b', 'facebook/opt-66b']
-
+best_acc1 = 0 
 
 def parse_args(args):
    parser = argparse.ArgumentParser(description="Audio Caption training in GILL")
@@ -51,8 +53,8 @@ def parse_args(args):
             help='number of training steps per epoch')
    # parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
    #          help='manual epoch number (useful on restarts)')
-   # parser.add_argument('--val_steps_per_epoch', default=-1, type=int, metavar='N',
-   #          help='number of validation steps per epoch')
+   parser.add_argument('--val_steps_per_epoch', default=2, type=int, metavar='N',
+            help='number of validation steps per epoch')
    parser.add_argument('-b', '--batch-size', default=2, type=int,
             metavar='N',
             help='mini-batch size (default: 200), this is the total '
@@ -172,6 +174,7 @@ def main(args):
 
 
 def main_worker(ngpus_per_node, args):
+   global best_acc1
    model_args = models.GILLArgs()
    model_args.opt_version = args.opt_version
    # model_args.visual_encoder = args.visual_model
@@ -208,7 +211,8 @@ def main_worker(ngpus_per_node, args):
       model = model.float()
    elif args.precision == 'bf16':
       model = model.bfloat16()
-
+   
+   model = model.cuda()
    criterion = nn.CrossEntropyLoss().cuda()
    optimizer_cls = torch.optim.AdamW
    print('Using torch.optim.AdamW as the optimizer.')
@@ -224,8 +228,13 @@ def main_worker(ngpus_per_node, args):
       if os.path.isfile(args.resume):
          print("=> loading checkpoint '{}'".format(args.resume))
          checkpoint = torch.load(args.resume)
-      # args.start_epoch = checkpoint["epoch"]
-      model.load_state_dict(checkpoint['state_dict'], strict=False)
+         args.start_epoch = checkpoint["epoch"]
+         best_acc1 = checkpoint['best_acc1']
+         model.load_state_dict(checkpoint['state_dict'], strict=False)
+         optimizer.load_state_dict(checkpoint['optimizer'])
+         scheduler.load_state_dict(checkpoint['scheduler'])
+         print("=> loaded checkpoint '{}' (epoch {})"
+          .format(args.resume, checkpoint['epoch']))
    
    # params_to_freeze = checkpoint["state_dict"].keys()
 
@@ -237,15 +246,15 @@ def main_worker(ngpus_per_node, args):
    cudnn.benchmark = True
 
    ## Data loading --> to be changed
-   train_audio_df = pd.read_csv("datasets/AudioCaps/train.csv")
-   root_train = "datasets/AudioCaps/train"
-   downloaded_train_audio_df = pd.DataFrame()
-   for audio_file_name in os.listdir(root_train):
-      if audio_file_name[-4:] != ".wav":
-         continue
-      audio_file_name = audio_file_name[:-4]
-      downloaded_train_audio_df = pd.concat([downloaded_train_audio_df,train_audio_df[train_audio_df["audiocap_id"]==int(audio_file_name)]],
-                                             ignore_index = True)
+   # train_audio_df = pd.read_csv("datasets/AudioCaps/train.csv")
+   # root_train = "datasets/AudioCaps/train"
+   # downloaded_train_audio_df = pd.DataFrame()
+   # for audio_file_name in os.listdir(root_train):
+   #    if audio_file_name[-4:] != ".wav":
+   #       continue
+   #    audio_file_name = audio_file_name[:-4]
+   #    downloaded_train_audio_df = pd.concat([downloaded_train_audio_df,train_audio_df[train_audio_df["audiocap_id"]==int(audio_file_name)]],
+   #                                           ignore_index = True)
       
    train_dataset = data.get_audio_dataset(args,"train",tokenizer)
    val_dataset = data.get_audio_dataset(args,"val",tokenizer)
@@ -257,7 +266,7 @@ def main_worker(ngpus_per_node, args):
       val_dataset, batch_size = args.batch_size, shuffle = True)
    
    #training loop
-   for epoch in range(args.epochs):
+   for epoch in tqdm(range(args.epochs),total=args.epochs):
       #train for 1 epoch
       train(train_loader, model, tokenizer, criterion, optimizer, epoch, scheduler, args)
 
@@ -305,7 +314,7 @@ def train(train_loader, model, tokenizer, criterion, optimizer, epoch, scheduler
    model.train()
    end = time.time()
 
-   for i,(_,audio_features,tokenized_caption,caption_len) in enumerate(train_loader):
+   for i,(_,audio_features,tokenized_caption,caption_len) in tqdm(enumerate(train_loader),total=len(train_loader)):
       mode_start = time.time()
       actual_step = epoch * args.steps_per_epoch + i + 1
       loss = 0
@@ -357,7 +366,7 @@ def train(train_loader, model, tokenizer, criterion, optimizer, epoch, scheduler
       if actual_step == 1 or (i + 1) % args.print_freq == 0:
          ex_per_sec = args.batch_size / batch_time.avg
          progress.display(i + 1)
-         writer.add_scaler('train/loss', losses.avg, actual_step)
+         writer.add_scalar('train/loss', losses.avg, actual_step)
          writer.add_scalar('train/ce_loss', ce_losses.avg, actual_step)
          writer.add_scalar('train/cap_audio_emb_norm', cap_audio_emb_norm.avg, actual_step)
          writer.add_scalar('train/text_emb_norm', inp_emb_norm.avg, actual_step)
@@ -368,7 +377,7 @@ def train(train_loader, model, tokenizer, criterion, optimizer, epoch, scheduler
 
          audio_features_bs = audio_embs.shape[0]
          normalized_audio_embs = audio_embs - audio_embs.min()
-         normalized_images /= normalized_images.max()
+         normalized_audio_embs /= normalized_audio_embs.max()
 
          pred_tokens = output[:, args.n_audio_tokens-1:-1, :].argmax(dim=-1)
          generated_captions = tokenizer.batch_decode(pred_tokens, skip_special_tokens=False)
@@ -382,8 +391,8 @@ def train(train_loader, model, tokenizer, criterion, optimizer, epoch, scheduler
          cap_audio_emb_norm.reset()
          inp_emb_norm.reset()
          
-      if i == args.steps_per_epoch - 1:
-         break
+      # if i == args.steps_per_epoch - 1:
+      #    break
 
       scheduler.step()
       curr_lr = scheduler.get_last_lr()
@@ -392,6 +401,8 @@ def train(train_loader, model, tokenizer, criterion, optimizer, epoch, scheduler
          writer = SummaryWriter(args.log_dir)
          writer.add_scalar('train/lr', curr_lr[0], actual_step)
          writer.close()
+         
+      break
    
    writer.close()
 
