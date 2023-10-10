@@ -70,7 +70,7 @@ def parse_args(args):
    parser.add_argument('--val-batch-size', default=None, type=int)
    parser.add_argument('--lr', '--learning-rate', default=0.001, type=float,
             metavar='LR', help='initial learning rate', dest='lr')
-   parser.add_argument('--lr-warmup-steps', default=2000, type=int,
+   parser.add_argument('--lr-warmup-steps', default=500, type=int,
             metavar='N', help='Number of steps to warm up lr.')
    parser.add_argument('--lr_schedule_step_size', default=5, type=int,
             metavar='N', help='Number of steps before decaying lr.')
@@ -98,7 +98,7 @@ def parse_args(args):
    parser.add_argument('--wd', '--weight-decay', default=0.01, type=float,
             metavar='W', help='weight decay (default: 0.01)',
             dest='weight_decay')
-   parser.add_argument('-p', '--print-freq', default=10, type=int,
+   parser.add_argument('-p', '--print-freq', default=20, type=int,
             metavar='N', help='print frequency (default: 10)')
    parser.add_argument('--resume', default='', type=str, metavar='PATH',
             help='path to latest checkpoint (default: none)')
@@ -268,8 +268,12 @@ def main_worker(ngpus_per_node, args):
    #training loop
    for epoch in tqdm(range(args.epochs),total=args.epochs):
       #train for 1 epoch
-      train(train_loader, model, tokenizer, criterion, optimizer, epoch, scheduler, args)
-
+      try:
+         train(train_loader, model, tokenizer, criterion, optimizer, epoch, scheduler, args)
+      except Exception as e:
+         print(e) 
+         break  
+      
       acc1 = validate.validate_for_audiocaps(val_loader, model, tokenizer, criterion, epoch, args)
       is_best = acc1 > best_acc1
       best_acc1 = max(acc1, best_acc1)
@@ -298,13 +302,14 @@ def train(train_loader, model, tokenizer, criterion, optimizer, epoch, scheduler
    # cont_losses = utils.AverageMeter('ContLoss', ':.4e')
    top1 = utils.AverageMeter('Acc@1', ':6.2f')
    top5 = utils.AverageMeter('Acc@5', ':6.2f')
-   cap_audio_emb_norm = utils.AverageMeter('VisualEmbNormCap', ':.4e')
+   cap_audio_emb_norm = utils.AverageMeter('AudioEmbNormCap', ':.4e')
    inp_emb_norm = utils.AverageMeter('TextEmbNorm', ':.4e')
    # top1_caption = utils.AverageMeter('AccCaption@1', ':6.2f')
    # top5_caption = utils.AverageMeter('AccCaption@5', ':6.2f')
 
    writer = SummaryWriter(args.log_dir)
 
+   args.steps_per_epoch = len(train_loader)
    progress = utils.ProgressMeter(
     args.steps_per_epoch,
     [batch_time, losses, ce_losses, top1, top5],
@@ -315,6 +320,7 @@ def train(train_loader, model, tokenizer, criterion, optimizer, epoch, scheduler
    end = time.time()
 
    for i,(_,audio_features,tokenized_caption,caption_len) in tqdm(enumerate(train_loader),total=len(train_loader)):
+      assert audio_features["input_features"].size(0) == args.batch_size, f"Batch Size={args.batch_size}\t Audio Features 0th dim={audio_features['input_features'].size(0)}"
       mode_start = time.time()
       actual_step = epoch * args.steps_per_epoch + i + 1
       loss = 0
@@ -391,8 +397,8 @@ def train(train_loader, model, tokenizer, criterion, optimizer, epoch, scheduler
          cap_audio_emb_norm.reset()
          inp_emb_norm.reset()
          
-      # if i == args.steps_per_epoch - 1:
-      #    break
+      if i == args.steps_per_epoch - 1:
+         break
 
       scheduler.step()
       curr_lr = scheduler.get_last_lr()
@@ -402,7 +408,6 @@ def train(train_loader, model, tokenizer, criterion, optimizer, epoch, scheduler
          writer.add_scalar('train/lr', curr_lr[0], actual_step)
          writer.close()
          
-      break
    
    writer.close()
 

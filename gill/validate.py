@@ -357,7 +357,8 @@ def validate_for_audiocaps(val_loader, model, tokenizer, criterion, epoch, args)
       all_generated_audio_paths = []
       all_audio_features = []
       all_text_features = []
-
+      args.val_steps_per_epoch = len(val_loader)
+      
       for  i, (audio_paths, audio_features, tokenized_caption, caption_len) in tqdm.tqdm(enumerate(loader), position=0, total=len(loader)):
         i = base_progress + i
         audio_features["input_features"] = audio_features["input_features"].squeeze(1)

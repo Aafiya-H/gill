@@ -169,7 +169,7 @@ class GILLModel(nn.Module):
     self.audio_embeddings = self.audio_embeddings.cuda()
     audio_embs = self.audio_embeddings(encoder_outputs)
     audio_embs = torch.reshape(audio_embs, (audio_embs.shape[0], self.args.n_audio_tokens, -1)) 
-    print("Audio embs shape (captioning) :",audio_embs.size())
+    # print("Audio embs shape (captioning) :",audio_embs.size())
     return audio_embs
     
   def get_visual_embs(self, pixel_values: torch.FloatTensor, mode: str = 'captioning'):
