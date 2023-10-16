@@ -407,7 +407,7 @@ def validate_for_audiocaps(val_loader, model, tokenizer, criterion, epoch, args)
         gt_captions = tokenizer.batch_decode(all_tgt_tokens, skip_special_tokens=True)
 
         for cap_i in range(len(generated_captions)):
-          audio_path = audio_paths[i]
+          audio_path = audio_paths[cap_i]
           all_generated_audio_paths.append(audio_path)
           stop_idx = generated_captions[cap_i].find('.')
           if stop_idx > 5:
@@ -441,8 +441,8 @@ def validate_for_audiocaps(val_loader, model, tokenizer, criterion, epoch, args)
         if i % args.print_freq == 0:
           progress.display(i + 1)
 
-        if i == args.val_steps_per_epoch - 1:
-          break
+        # if i == args.val_steps_per_epoch - 1:
+        #   break
       
       ##from here
       path2captions = collections.defaultdict(list)

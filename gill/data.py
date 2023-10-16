@@ -111,7 +111,10 @@ class AudioCapsDataset(Dataset):
     # audio_file_path = os.path.join(self.base_audio_dir,"0.wav")
     caption = self.captions[index]
     audio_data, sampling_rate = librosa.load(audio_file_path)
-    audio_features = utils.get_audio_values_for_model(self.feature_extractor,audio_data)
+    target_sampling_rate = 48000 
+    audio_data = librosa.resample(audio_data, orig_sr=sampling_rate, target_sr=target_sampling_rate)
+    sampling_rate = target_sampling_rate
+    audio_features = utils.get_audio_values_for_model(self.feature_extractor,audio_data,sampling_rate)
     tokenized_data = self.tokenizer(
           caption,
           return_tensors="pt",

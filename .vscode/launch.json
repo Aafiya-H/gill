@@ -14,8 +14,8 @@
             "justMyCode": false,
             "args": [
                 "--opt-version","facebook/opt-125m",
-                "--epochs","5",
-                "--batch-size","4",
+                "--epochs","20",
+                "--batch-size","16",
             ]
         },
         {
@@ -23,7 +23,7 @@
             "type": "python",
             "python":"../../../../mnt/media/wiseyak/reasoning/bin/python3",
             "request": "launch",
-            "program": "evals/generate_vist_images_last_sis_text.py",
+            "program": "evals/generate_audio_captions.py",
             "console": "integratedTerminal",
             "justMyCode": false
         }

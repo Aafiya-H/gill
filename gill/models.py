@@ -23,7 +23,7 @@ class GILLArgs:
   freeze_lm: bool = True
   freeze_vm: bool = True
   freeze_am: bool = True
-  opt_version: str = 'facebook/opt-6.7b'
+  opt_version: str = 'facebook/opt-125m'
   visual_encoder: str = 'openai/clip-vit-large-patch14'
   n_visual_tokens: int = 1
   n_audio_tokens: int = 1
@@ -209,6 +209,18 @@ class GILLModel(nn.Module):
       self.visual_model.eval()
     if self.args.freeze_am:
       self.audio_model.eval()
+      
+    for param in self.visual_embeddings.parameters():
+      param.requires_grad = False
+      
+    for param in self.visual_fc.parameters():
+      param.requires_grad = False
+      
+    for param in self.ret_text_hidden_fcs.parameters():
+      param.requires_grad = False
+      
+    for param in self.gen_text_hidden_fcs.parameters():
+      param.requires_grad = False
 
 
   def forward(
@@ -736,8 +748,8 @@ class GILL(nn.Module):
           input_embs.append(text_embs)
           input_ids.append(text_ids)
 
-        elif type(p) in [np.ndarray,torch.Tensor,List[np.ndarray],List[torch.Tensor]]:
-          audio_features = utils.get_audio_values_for_model(self.model.feature_extractor_audio,p)
+        elif type(p) == dict:
+          audio_features = utils.get_audio_values_for_model(self.model.feature_extractor_audio,p["audio_data"],p["sampling_rate"])
           audio_features = audio_features.to(device=self.model.logit_scale.device,dtype=self.model.logit_scale.dtype)
           audio_embs = self.model.get_audio_embs(audio_features)
           input_embs.append(audio_embs)
@@ -932,9 +944,9 @@ class GILL(nn.Module):
     return -outputs.loss.item()  
 
 
-def load_gill(model_dir: str, load_ret_embs: bool = True) -> GILL:
+def load_gill(model_dir: str, ckpt_name: str, decision_model_name: str = None, load_ret_embs: bool = True) -> GILL:
   model_args_path = os.path.join(model_dir, 'model_args.json')
-  model_ckpt_path = os.path.join(model_dir, 'pretrained_ckpt.pth.tar')
+  model_ckpt_path = os.path.join(model_dir, ckpt_name)
   embs_paths = [s for s in glob.glob(os.path.join(model_dir, 'cc3m*.npy'))]
 
   if not os.path.exists(model_args_path):
@@ -989,7 +1001,10 @@ def load_gill(model_dir: str, load_ret_embs: bool = True) -> GILL:
   args = namedtuple('args', model_kwargs)(**model_kwargs)
 
   # Load decision model.
-  decision_model_path = os.path.join(model_dir, 'decision_model.pth.tar')
+  if decision_model_name and os.path.exists(os.path.join(model_dir, decision_model_name)):
+    decision_model_path = os.path.join(model_dir, decision_model_name)
+  else:
+    decision_model_path = None
 
   # Initialize model for inference.
   model = GILL(tokenizer, args, path_array=path_array, emb_matrix=emb_matrix,
@@ -1012,7 +1027,7 @@ def load_gill(model_dir: str, load_ret_embs: bool = True) -> GILL:
   with torch.no_grad():
       if 'share_ret_gen' in model_kwargs:
         assert model_kwargs['share_ret_gen'], 'Model loading only supports share_ret_gen=True for now.'
-      model.model.input_embeddings.weight[-model_kwargs['num_tokens']:, :].copy_(img_token_embeddings)
+      model.model.input_embeddings.weight[-model_kwargs['num_tokens']:, :].copy_(img_token_embeddings[-model_kwargs['num_tokens']:, :])
 
   if load_ret_embs and len(embs_paths) > 0:
     logit_scale = model.model.logit_scale.exp()

@@ -5,6 +5,7 @@ import random
 import torch
 import warnings
 import time
+import json
 
 import pandas as pd
 import torch.nn as nn
@@ -63,9 +64,9 @@ def parse_args(args):
 
    parser.add_argument('-d', '--dataset', metavar='DATASET',  help='Dataset to train on', 
                        default='audiocaps', type=str)
-   parser.add_argument('--dataset-dir', default='datasets/AudioCaps', type=str,
+   parser.add_argument('--dataset-dir', default='../../../../mnt/media/wiseyak/reasoning-datasets/AudioCaps', type=str,
             help='Dataset directory containing .csv files.')
-   parser.add_argument('--audio-dir', default='datasets/AudioCaps', type=str,
+   parser.add_argument('--audio-dir', default='../../../../mnt/media/wiseyak/reasoning-datasets/AudioCaps', type=str,
             help='Dataset directory containing .wav files.')
    parser.add_argument('--val-batch-size', default=None, type=int)
    parser.add_argument('--lr', '--learning-rate', default=0.001, type=float,
@@ -98,7 +99,7 @@ def parse_args(args):
    parser.add_argument('--wd', '--weight-decay', default=0.01, type=float,
             metavar='W', help='weight decay (default: 0.01)',
             dest='weight_decay')
-   parser.add_argument('-p', '--print-freq', default=20, type=int,
+   parser.add_argument('-p', '--print-freq', default=200, type=int,
             metavar='N', help='print frequency (default: 10)')
    parser.add_argument('--resume', default='', type=str, metavar='PATH',
             help='path to latest checkpoint (default: none)')
@@ -183,6 +184,7 @@ def main_worker(ngpus_per_node, args):
    model_args.freeze_lm = True
    # model_args.freeze_vm = True
    model_args.freeze_am = True
+   
 
    # model_args.n_visual_tokens = args.n_visual_tokens
    model_args.n_audio_tokens = args.n_audio_tokens
@@ -205,6 +207,8 @@ def main_worker(ngpus_per_node, args):
    # tokenizer.add_special_tokens({"cls_token": "<|image|>"})  # add special image token to tokenizer
 
    model = models.GILL(tokenizer,model_args)
+   with open(os.path.join(args.log_dir, 'model_args.json'), 'w') as f:
+      json.dump(vars(model_args), f, indent=4)
    
    # for param in ''
    if args.precision == 'fp16':
@@ -260,10 +264,10 @@ def main_worker(ngpus_per_node, args):
    val_dataset = data.get_audio_dataset(args,"val",tokenizer)
 
    train_loader = torch.utils.data.DataLoader(
-      train_dataset, batch_size = args.batch_size, shuffle = True)
+      train_dataset, batch_size = args.batch_size, shuffle = False)
    
    val_loader = torch.utils.data.DataLoader(
-      val_dataset, batch_size = args.batch_size, shuffle = True)
+      val_dataset, batch_size = args.batch_size, shuffle = False)
    
    #training loop
    for epoch in tqdm(range(args.epochs),total=args.epochs):
@@ -287,7 +291,7 @@ def main_worker(ngpus_per_node, args):
         'state_dict': stripped_state_dict,
         'best_acc1': best_acc1,
         'optimizer' : optimizer.state_dict(),
-        'scheduler' : scheduler.state_dict()
+        'scheduler' : scheduler.state_dict(),
       }, is_best, os.path.join(args.log_dir, 'ckpt'))
    
 
@@ -320,7 +324,7 @@ def train(train_loader, model, tokenizer, criterion, optimizer, epoch, scheduler
    end = time.time()
 
    for i,(_,audio_features,tokenized_caption,caption_len) in tqdm(enumerate(train_loader),total=len(train_loader)):
-      assert audio_features["input_features"].size(0) == args.batch_size, f"Batch Size={args.batch_size}\t Audio Features 0th dim={audio_features['input_features'].size(0)}"
+      # assert audio_features["input_features"].size(0) == args.batch_size, f"Batch Size={args.batch_size}\t Audio Features 0th dim={audio_features['input_features'].size(0)}"
       mode_start = time.time()
       actual_step = epoch * args.steps_per_epoch + i + 1
       loss = 0
@@ -362,13 +366,18 @@ def train(train_loader, model, tokenizer, criterion, optimizer, epoch, scheduler
          if args.grad_clip > 0:
             nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
          optimizer.step()
+         if actual_step == 1 or (i + 1) % args.print_freq == 0:
+            for name, param in model.named_parameters():
+               if param.requires_grad:
+                  if param.grad != None:
+                     writer.add_scalar(f'gradients/{name}', param.grad.norm(), actual_step)
+
          optimizer.zero_grad()
-         print('=' * 80)
       
       # measure elapsed time
       batch_time.update(time.time() - end)
       end = time.time()
-   
+      
       if actual_step == 1 or (i + 1) % args.print_freq == 0:
          ex_per_sec = args.batch_size / batch_time.avg
          progress.display(i + 1)
@@ -397,8 +406,8 @@ def train(train_loader, model, tokenizer, criterion, optimizer, epoch, scheduler
          cap_audio_emb_norm.reset()
          inp_emb_norm.reset()
          
-      if i == args.steps_per_epoch - 1:
-         break
+      # if i == args.steps_per_epoch - 1:
+      #    break
 
       scheduler.step()
       curr_lr = scheduler.get_last_lr()
@@ -406,8 +415,7 @@ def train(train_loader, model, tokenizer, criterion, optimizer, epoch, scheduler
          # Write current learning rate to Tensorboard.
          writer = SummaryWriter(args.log_dir)
          writer.add_scalar('train/lr', curr_lr[0], actual_step)
-         writer.close()
-         
+         writer.close()  
    
    writer.close()
 

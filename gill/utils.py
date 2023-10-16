@@ -118,8 +118,8 @@ def get_pixel_values_for_model(feature_extractor, img: Image.Image):
   pixel_values = feature_extractor(img.convert('RGB'), return_tensors="pt").pixel_values[0, ...]  # (3, H, W)
   return pixel_values
 
-def get_audio_values_for_model(feature_extractor, audio_data):
-  audio_features = feature_extractor(audio_data, return_tensors="pt")
+def get_audio_values_for_model(feature_extractor, audio_data,sampling_rate):
+  audio_features = feature_extractor(audio_data,sampling_rate = sampling_rate,return_tensors="pt") #,
   return audio_features
 
 def save_checkpoint(state, is_best, filename='checkpoint'):
