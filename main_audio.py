@@ -3,9 +3,12 @@ import argparse
 import os
 import random
 import torch
+torch.set_num_threads(4)
 import warnings
 import time
 import json
+import gc
+import subprocess
 
 import pandas as pd
 import torch.nn as nn
@@ -105,7 +108,7 @@ def parse_args(args):
             help='path to latest checkpoint (default: none)')
    parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
             help='evaluate model on validation set')
-   parser.add_argument('--input-prompt', default='Caption this sound.', type=str, help="Input prompt for the language model, if any.")   
+   parser.add_argument('--input-prompt', default='The sound of ', type=str, help="Input prompt for the language model, if any.")   
 #    parser.add_argument('--world-size', default=-1, type=int,
 #             help='number of nodes for distributed training')
 #    parser.add_argument('--rank', default=-1, type=int,
@@ -215,6 +218,10 @@ def main_worker(ngpus_per_node, args):
       model = model.float()
    elif args.precision == 'bf16':
       model = model.bfloat16()
+      
+   param_counts_text = utils.get_params_count_str(model)
+   with open(os.path.join(args.log_dir, 'param_count.txt'), 'w') as f:
+      f.write(param_counts_text)
    
    model = model.cuda()
    criterion = nn.CrossEntropyLoss().cuda()
@@ -261,13 +268,20 @@ def main_worker(ngpus_per_node, args):
    #                                           ignore_index = True)
       
    train_dataset = data.get_audio_dataset(args,"train",tokenizer)
+   
+   # split = "val"
+   # dataset_paths.append(os.path.join(args.dataset_dir,f'{split}-downloaded.csv'))
+   # audio_data_dirs.append(os.path.join(args.audio_dir, f'{split}'))
+   # val_dataset = data.AudioCapsDataset(dataset_paths[0],audio_data_dirs[0],tokenizer,"audiocap_id","caption",
+   #                             args.audio_model,max_len=args.max_len, precision=args.precision)
+   
    val_dataset = data.get_audio_dataset(args,"val",tokenizer)
 
    train_loader = torch.utils.data.DataLoader(
       train_dataset, batch_size = args.batch_size, shuffle = False)
    
    val_loader = torch.utils.data.DataLoader(
-      val_dataset, batch_size = args.batch_size, shuffle = False)
+      val_dataset, batch_size = args.batch_size, shuffle = True)
    
    #training loop
    for epoch in tqdm(range(args.epochs),total=args.epochs):
@@ -277,7 +291,7 @@ def main_worker(ngpus_per_node, args):
       except Exception as e:
          print(e) 
          break  
-      
+      # x,y,z,w = next(iter(val_loader))
       acc1 = validate.validate_for_audiocaps(val_loader, model, tokenizer, criterion, epoch, args)
       is_best = acc1 > best_acc1
       best_acc1 = max(acc1, best_acc1)
@@ -292,7 +306,7 @@ def main_worker(ngpus_per_node, args):
         'best_acc1': best_acc1,
         'optimizer' : optimizer.state_dict(),
         'scheduler' : scheduler.state_dict(),
-      }, is_best, os.path.join(args.log_dir, 'ckpt'))
+      }, is_best, os.path.join(f"{args.log_dir}" , f'{epoch + 1}_ckpt'))
    
 
 def train(train_loader, model, tokenizer, criterion, optimizer, epoch, scheduler, args):
@@ -322,6 +336,7 @@ def train(train_loader, model, tokenizer, criterion, optimizer, epoch, scheduler
    #switch to train mode
    model.train()
    end = time.time()
+   command = "sudo sh -c 'echo 1 > /proc/sys/vm/drop_caches'"
 
    for i,(_,audio_features,tokenized_caption,caption_len) in tqdm(enumerate(train_loader),total=len(train_loader)):
       # assert audio_features["input_features"].size(0) == args.batch_size, f"Batch Size={args.batch_size}\t Audio Features 0th dim={audio_features['input_features'].size(0)}"
@@ -339,7 +354,7 @@ def train(train_loader, model, tokenizer, criterion, optimizer, epoch, scheduler
 
       (model_output, full_labels, last_embedding, last_output_logit, audio_embs, 
       audio_embs_norm, input_embs_norm, llm_hidden_states) = model(audio_features=audio_features, caption_len = caption_len,
-                                                                   concat_captions=concat_captions, tokenized_caption=tokenized_caption)
+                                                                   concat_captions=concat_captions, tokenized_caption=tokenized_caption,input_prefix=args.input_prompt)
 
       output = model_output.logits
       acc1, acc5 = utils.accuracy(output[:, :-1, :], full_labels[:, 1:], -100, topk=(1, 5))
@@ -352,7 +367,7 @@ def train(train_loader, model, tokenizer, criterion, optimizer, epoch, scheduler
       ce_losses.update(ce_loss.item(), audio_features["input_features"].size(0))
       cap_audio_emb_norm.update(audio_embs_norm.item(),audio_features["input_features"].size(0))
 
-      inp_emb_norm.update(input_embs_norm.item(), audio_features["input_features"].size(0))
+      # inp_emb_norm.update(input_embs_norm.item(), audio_features["input_features"].size(0))
       cap_time.update(time.time() - mode_start)
       
       loss = loss / args.grad_accumulation_steps
@@ -415,7 +430,13 @@ def train(train_loader, model, tokenizer, criterion, optimizer, epoch, scheduler
          # Write current learning rate to Tensorboard.
          writer = SummaryWriter(args.log_dir)
          writer.add_scalar('train/lr', curr_lr[0], actual_step)
-         writer.close()  
+         writer.close() 
+         
+      # subprocess.run(command, shell=True, check=True)
+      sudo_password = "####"
+      subprocess.run(f"echo {sudo_password} | sudo -S sh -c 'echo 1 > /proc/sys/vm/drop_caches'", shell=True)
+      gc.collect()
+      torch.cuda.empty_cache() 
    
    writer.close()
 
