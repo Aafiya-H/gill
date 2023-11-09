@@ -7,7 +7,7 @@
         {
             "name": "Python: Current File",
             "type": "python",
-            "python":"../../../../mnt/media/wiseyak/reasoning/bin/python3",
+            "python":"../../../../../mnt/media/wiseyak/reasoning/bin/python3",
             "request": "launch",
             "program": "main_audio.py",
             "console": "integratedTerminal",
@@ -21,9 +21,18 @@
         {
             "name": "evaluate",
             "type": "python",
-            "python":"../../../../mnt/media/wiseyak/reasoning/bin/python3",
+            "python":"../../../../../mnt/media/wiseyak/reasoning/bin/python3",
             "request": "launch",
             "program": "evals/generate_audio_captions.py",
+            "console": "integratedTerminal",
+            "justMyCode": false
+        },
+        {
+            "name": "retrieval:T-->A",
+            "type": "python",
+            "python":"../../../../../mnt/media/wiseyak/reasoning/bin/python3",
+            "request": "launch",
+            "program": "encoders-retrieval-scripts/clap_text_to_audio.py",
             "console": "integratedTerminal",
             "justMyCode": false
         }

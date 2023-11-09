@@ -55,8 +55,8 @@ def parse_args(args):
             help='number of total epochs to run')
    parser.add_argument('--steps_per_epoch', default=2000, type=int, metavar='N',
             help='number of training steps per epoch')
-   # parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
-   #          help='manual epoch number (useful on restarts)')
+   parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
+            help='manual epoch number (useful on restarts)')
    parser.add_argument('--val_steps_per_epoch', default=2, type=int, metavar='N',
             help='number of validation steps per epoch')
    parser.add_argument('-b', '--batch-size', default=2, type=int,
@@ -67,9 +67,9 @@ def parse_args(args):
 
    parser.add_argument('-d', '--dataset', metavar='DATASET',  help='Dataset to train on', 
                        default='audiocaps', type=str)
-   parser.add_argument('--dataset-dir', default='../../../../mnt/media/wiseyak/reasoning-datasets/AudioCaps', type=str,
+   parser.add_argument('--dataset-dir', default='../../../../../mnt/media/wiseyak/reasoning-datasets/AudioCaps', type=str,
             help='Dataset directory containing .csv files.')
-   parser.add_argument('--audio-dir', default='../../../../mnt/media/wiseyak/reasoning-datasets/AudioCaps', type=str,
+   parser.add_argument('--audio-dir', default='../../../../../mnt/media/wiseyak/reasoning-datasets/AudioCaps', type=str,
             help='Dataset directory containing .wav files.')
    parser.add_argument('--val-batch-size', default=None, type=int)
    parser.add_argument('--lr', '--learning-rate', default=0.001, type=float,
@@ -133,10 +133,15 @@ def main(args):
    args = parse_args(args)
    i = 1
    args.log_dir = os.path.join(args.log_base_dir, args.exp_name)
-   while os.path.exists(args.log_dir):
-      args.log_dir = os.path.join(args.log_base_dir, f'{args.exp_name}_{i}')
-      i += 1
-   os.makedirs(args.log_dir)
+   
+   if args.resume and os.path.isfile(args.resume):
+      args.log_dir = os.path.dirname(args.resume)
+      print("Log dir :",args.log_dir)         
+   else:
+      while os.path.exists(args.log_dir):
+         args.log_dir = os.path.join(args.log_base_dir, f'{args.exp_name}_{i}')
+         i += 1
+      os.makedirs(args.log_dir)
 
    with open(os.path.join(args.log_dir, f'git_info.txt'), 'w') as wf:
       utils.dump_git_status(out_file=wf)
@@ -254,27 +259,8 @@ def main_worker(ngpus_per_node, args):
    #       if name == param_to_freeze:
    #          param.requires_grad = False
 
-   cudnn.benchmark = True
-
-   ## Data loading --> to be changed
-   # train_audio_df = pd.read_csv("datasets/AudioCaps/train.csv")
-   # root_train = "datasets/AudioCaps/train"
-   # downloaded_train_audio_df = pd.DataFrame()
-   # for audio_file_name in os.listdir(root_train):
-   #    if audio_file_name[-4:] != ".wav":
-   #       continue
-   #    audio_file_name = audio_file_name[:-4]
-   #    downloaded_train_audio_df = pd.concat([downloaded_train_audio_df,train_audio_df[train_audio_df["audiocap_id"]==int(audio_file_name)]],
-   #                                           ignore_index = True)
-      
-   train_dataset = data.get_audio_dataset(args,"train",tokenizer)
-   
-   # split = "val"
-   # dataset_paths.append(os.path.join(args.dataset_dir,f'{split}-downloaded.csv'))
-   # audio_data_dirs.append(os.path.join(args.audio_dir, f'{split}'))
-   # val_dataset = data.AudioCapsDataset(dataset_paths[0],audio_data_dirs[0],tokenizer,"audiocap_id","caption",
-   #                             args.audio_model,max_len=args.max_len, precision=args.precision)
-   
+   cudnn.benchmark = True      
+   train_dataset = data.get_audio_dataset(args,"train",tokenizer) 
    val_dataset = data.get_audio_dataset(args,"val",tokenizer)
 
    train_loader = torch.utils.data.DataLoader(
@@ -284,7 +270,7 @@ def main_worker(ngpus_per_node, args):
       val_dataset, batch_size = args.batch_size, shuffle = True)
    
    #training loop
-   for epoch in tqdm(range(args.epochs),total=args.epochs):
+   for epoch in tqdm(range(args.start_epoch,args.epochs),total=args.epochs):
       #train for 1 epoch
       try:
          train(train_loader, model, tokenizer, criterion, optimizer, epoch, scheduler, args)

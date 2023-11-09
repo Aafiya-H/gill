@@ -15,4 +15,5 @@ rough_work2.ipynb
 outputs/
 runs/
 eval_audiocaps.ipynb
-prasant/
+encoders-retrieval-scripts/results.csv
+encoders-retrieval-scripts/clap_audio_to_text.json
