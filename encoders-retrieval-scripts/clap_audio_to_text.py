@@ -32,7 +32,9 @@ def get_scores(audio_file_names, batch_size = 16):
         return batches
     print("Resuming from ",batches["last-index-completed"]+1)
     
-    for index,audio_file_name in tqdm(enumerate(audio_file_names[batches["last-index-completed"] + 1:]),total=len(audio_file_names[batches["last-index-completed"] + 1:])):
+    for index,audio_file_name in tqdm(enumerate(audio_file_names),total=len(audio_file_names)):
+        if index <= batches["last-index-completed"]:
+            continue
         audio_data, sampling_rate = librosa.load(os.path.join(audio_files_path,audio_file_name+".wav"))
         target_sampling_rate = 48000 
         audio_data = librosa.resample(audio_data, orig_sr=sampling_rate, target_sr=target_sampling_rate)
@@ -98,7 +100,7 @@ if __name__ == "__main__":
     map_scores = map_scores/len(audiocaps_df)
     
     row = pd.DataFrame.from_dict({
-        "R@1":[r1], "R@5":[r5], "R@10":[r10],"MAP@10":[map_scores],"SlidingWindow":[args.batch_size],"Direction":["A->T"]   
+        "Model":[contrastive_model_name],"R@1":[r1], "R@5":[r5], "R@10":[r10],"MAP@10":[map_scores],"SlidingWindow":[args.batch_size],"Direction":["A->T"]   
     })
     
     results_df = pd.read_csv("encoders-retrieval-scripts/results.csv")

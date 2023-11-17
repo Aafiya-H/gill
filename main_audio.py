@@ -53,12 +53,12 @@ def parse_args(args):
    
    parser.add_argument('--epochs', default=90, type=int, metavar='N',
             help='number of total epochs to run')
-   parser.add_argument('--steps_per_epoch', default=2000, type=int, metavar='N',
-            help='number of training steps per epoch')
+   # parser.add_argument('--steps_per_epoch', default=2, type=int, metavar='N',
+   #          help='number of training steps per epoch')
    parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
             help='manual epoch number (useful on restarts)')
-   parser.add_argument('--val_steps_per_epoch', default=2, type=int, metavar='N',
-            help='number of validation steps per epoch')
+   # parser.add_argument('--val_steps_per_epoch', default=2, type=int, metavar='N',
+   #          help='number of validation steps per epoch')
    parser.add_argument('-b', '--batch-size', default=2, type=int,
             metavar='N',
             help='mini-batch size (default: 200), this is the total '
@@ -216,7 +216,9 @@ def main_worker(ngpus_per_node, args):
 
    model = models.GILL(tokenizer,model_args)
    with open(os.path.join(args.log_dir, 'model_args.json'), 'w') as f:
-      json.dump(vars(model_args), f, indent=4)
+      model_args = vars(model_args)
+      model_args["text_emb_layers"] = [-1]
+      json.dump(model_args, f, indent=4)
    
    # for param in ''
    if args.precision == 'fp16':
@@ -236,9 +238,6 @@ def main_worker(ngpus_per_node, args):
                   betas=(args.beta1, args.beta2),
                   weight_decay=args.weight_decay,
                   eps=1e-8)
-   
-   scheduler_steplr = StepLR(optimizer, step_size=args.lr_schedule_step_size * args.steps_per_epoch, gamma=args.lr_schedule_gamma)
-   scheduler = GradualWarmupScheduler(optimizer, multiplier=1.0, total_epoch=args.lr_warmup_steps, after_scheduler=scheduler_steplr)
    
    if args.resume:
       if os.path.isfile(args.resume):
@@ -269,7 +268,12 @@ def main_worker(ngpus_per_node, args):
    val_loader = torch.utils.data.DataLoader(
       val_dataset, batch_size = args.batch_size, shuffle = True)
    
+   args.steps_per_epoch = 2 # change
+   scheduler_steplr = StepLR(optimizer, step_size=args.lr_schedule_step_size * args.steps_per_epoch, gamma=args.lr_schedule_gamma)
+   scheduler = GradualWarmupScheduler(optimizer, multiplier=1.0, total_epoch=args.lr_warmup_steps, after_scheduler=scheduler_steplr)
+   
    #training loop
+   saving_checkpoint_freq = 10
    for epoch in tqdm(range(args.start_epoch,args.epochs),total=args.epochs):
       #train for 1 epoch
       try:
@@ -281,18 +285,19 @@ def main_worker(ngpus_per_node, args):
       acc1 = validate.validate_for_audiocaps(val_loader, model, tokenizer, criterion, epoch, args)
       is_best = acc1 > best_acc1
       best_acc1 = max(acc1, best_acc1)
-      stripped_state_dict = {
-          k: v for k, v in model.state_dict().items() if 
-          ('.lm' not in k and '.visual_model' not in k and ".audio_model" not in k) # check if more need to be added
-      }
-      stripped_state_dict = OrderedDict(sorted(stripped_state_dict.items()))
-      utils.save_checkpoint({
-        'epoch': epoch + 1,
-        'state_dict': stripped_state_dict,
-        'best_acc1': best_acc1,
-        'optimizer' : optimizer.state_dict(),
-        'scheduler' : scheduler.state_dict(),
-      }, is_best, os.path.join(f"{args.log_dir}" , f'{epoch + 1}_ckpt'))
+      if is_best or epoch % saving_checkpoint_freq == 0:
+         stripped_state_dict = {
+            k: v for k, v in model.state_dict().items() if 
+            ('.lm' not in k and '.vis' not in k and ".audio_model" not in k and "gen" not in k and "ret" not in k) # check if more need to be added
+         }
+         stripped_state_dict = OrderedDict(sorted(stripped_state_dict.items()))
+         utils.save_checkpoint({
+         'epoch': epoch + 1,
+         'state_dict': stripped_state_dict,
+         'best_acc1': best_acc1,
+         'optimizer' : optimizer.state_dict(),
+         'scheduler' : scheduler.state_dict(),
+         }, is_best, os.path.join(f"{args.log_dir}" , f'{epoch + 1}_ckpt'))
    
 
 def train(train_loader, model, tokenizer, criterion, optimizer, epoch, scheduler, args):
@@ -313,7 +318,7 @@ def train(train_loader, model, tokenizer, criterion, optimizer, epoch, scheduler
 
    writer = SummaryWriter(args.log_dir)
 
-   args.steps_per_epoch = len(train_loader)
+   
    progress = utils.ProgressMeter(
     args.steps_per_epoch,
     [batch_time, losses, ce_losses, top1, top5],
@@ -407,8 +412,8 @@ def train(train_loader, model, tokenizer, criterion, optimizer, epoch, scheduler
          cap_audio_emb_norm.reset()
          inp_emb_norm.reset()
          
-      # if i == args.steps_per_epoch - 1:
-      #    break
+      if i == args.steps_per_epoch - 1:
+         break
 
       scheduler.step()
       curr_lr = scheduler.get_last_lr()
@@ -419,8 +424,8 @@ def train(train_loader, model, tokenizer, criterion, optimizer, epoch, scheduler
          writer.close() 
          
       # subprocess.run(command, shell=True, check=True)
-      sudo_password = "####"
-      subprocess.run(f"echo {sudo_password} | sudo -S sh -c 'echo 1 > /proc/sys/vm/drop_caches'", shell=True)
+      # sudo_password = "####"
+      # subprocess.run(f"echo {sudo_password} | sudo -S sh -c 'echo 1 > /proc/sys/vm/drop_caches'", shell=True)
       gc.collect()
       torch.cuda.empty_cache() 
    

@@ -21,63 +21,85 @@ from gill import layers
 
 class GILLArgs:
   freeze_lm: bool = True
-  freeze_vm: bool = True
-  freeze_am: bool = True
+  # freeze_vm: bool = True
+  # freeze_am: bool = True
   opt_version: str = 'facebook/opt-125m'
-  visual_encoder: str = 'openai/clip-vit-large-patch14'
-  n_visual_tokens: int = 1
-  n_audio_tokens: int = 1
+  # visual_encoder: str = 'openai/clip-vit-large-patch14'
+  # n_visual_tokens: int = 1
+  # n_audio_tokens: int = 1
   task: str = 'captioning' # ["image-captioning", "audio-captioning"]
-  audio_encoder: str = "laion/clap-htsat-fused"
-    
-  ret_emb_dim: Optional[int] = 256
-  gen_emb_dim: Optional[int] = 256
+  # audio_encoder: str = "laion/clap-htsat-fused"
+  # ret_emb_dim: Optional[int] = 256
+  # gen_emb_dim: Optional[int] = 256
   text_emb_layers: List[int] = [-1]
-  gen_token_idx: Optional[List[int]] = [0]
-  retrieval_token_idx: Optional[List[int]] = [0]
-  text_fc_mode: Optional[str] = 'gill_mapper'
-  ret_text_fc_mode: Optional[str] = 'linear'
-  num_tokens: int = 8
-  num_clip_tokens: Optional[int] = 77
+  # gen_token_idx: Optional[List[int]] = [0]
+  # retrieval_token_idx: Optional[List[int]] = [0]
+  # text_fc_mode: Optional[str] = 'gill_mapper'
+  # ret_text_fc_mode: Optional[str] = 'linear'
+  # num_tokens: int = 8
+  # num_clip_tokens: Optional[int] = 77
 
 
 class GILLModel(nn.Module):
   def __init__(self, tokenizer, args: GILLArgs = GILLArgs()):
     super().__init__()
     self.tokenizer = tokenizer
-    self.feature_extractor = utils.get_feature_extractor_for_model(args.visual_encoder, train=False)
-    self.image_token = self.tokenizer.cls_token_id
-
-    self.feature_extractor_audio = utils.get_feature_extractor_for_model(args.audio_encoder, train=False)
-
-    assert args.text_emb_layers != set(args.text_emb_layers), 'text_emb_layers not unique'
+    print("Args:",args)
     self.args = args
-    self.num_tokens = args.num_tokens
-    self.num_clip_tokens = args.num_clip_tokens
-
-    opt_version = args.opt_version
-    visual_encoder = args.visual_encoder
-    n_visual_tokens = args.n_visual_tokens
-
-    audio_encoder = args.audio_encoder
-
-    print(f"Using {opt_version} for the language model.")
-    print(f"Using {visual_encoder} for the visual model with {n_visual_tokens} visual tokens.")
-    print(f"Using {audio_encoder} as audio encoder")
     
-    self.audio_model = ClapModel.from_pretrained(audio_encoder)
-    hidden_size_audio = self.audio_model.config.projection_dim
-    
-    if self.args.freeze_am:
-      print("Freezing the audio model")
-      self.audio_model.eval()
-      for param in self.audio_model.parameters():
-        param.requires_grad = False
+    if "task" in dir(args) and args.task == "audio-captioning":
+      self.feature_extractor_audio = utils.get_feature_extractor_for_model(args.audio_encoder, train=False)
+      self.feature_extractor = None
+      audio_encoder = args.audio_encoder
+      visual_encoder = None
+      n_visual_tokens = None      
+      self.audio_model = ClapModel.from_pretrained(audio_encoder)
+      hidden_size_audio = self.audio_model.config.projection_dim
+      if self.args.freeze_am:
+        print("Freezing the audio model")
+        self.audio_model.eval()
+        for param in self.audio_model.parameters():
+          param.requires_grad = False
+      else:
+        self.audio_model.train()
+      self.audio_model_name = audio_encoder 
+      print(f"Using {audio_encoder} as audio encoder")
+              
     else:
-      self.audio_model.train()
-
-    self.audio_model_name = audio_encoder 
-
+      self.feature_extractor_audio = None
+      self.feature_extractor = utils.get_feature_extractor_for_model(args.visual_encoder, train=False)
+      self.image_token = self.tokenizer.cls_token_id
+      audio_encoder = None
+      visual_encoder = args.visual_encoder
+      n_visual_tokens = args.n_visual_tokens
+      self.retrieval_token_idx = args.retrieval_token_idx
+      self.gen_token_idx = args.gen_token_idx
+      assert args.text_emb_layers != set(args.text_emb_layers), 'text_emb_layers not unique'
+      print("Restoring pretrained weights for the visual model.")
+      if 'clip' in visual_encoder:
+        self.visual_model = CLIPVisionModel.from_pretrained(visual_encoder)
+      else:
+        self.visual_model = AutoModel.from_pretrained(visual_encoder)
+      if 'clip' in visual_encoder:
+        hidden_size = self.visual_model.config.hidden_size
+      else:
+        raise NotImplementedError
+      if self.args.freeze_vm:
+        print("Freezing the VM.")
+        self.visual_model.eval()
+        for param in self.visual_model.parameters():
+          param.requires_grad = False
+      else:
+        self.visual_model.train()
+      self.visual_model_name = visual_encoder
+      self.num_clip_tokens = args.num_clip_tokens
+      print(f"Using {visual_encoder} for the visual model with {n_visual_tokens} visual tokens.")
+        
+      self.num_tokens = args.num_tokens
+    opt_version = args.opt_version
+    print(f"Using {opt_version} for the language model.")
+    
+    
     if 'facebook/opt' in opt_version:
       self.lm = OPTForCausalLM.from_pretrained(opt_version).cuda()
     else:
@@ -93,69 +115,43 @@ class GILLModel(nn.Module):
     else:
       self.lm.train()
 
-    self.retrieval_token_idx = args.retrieval_token_idx
-    self.gen_token_idx = args.gen_token_idx
     self.lm.resize_token_embeddings(len(tokenizer))
 
     self.input_embeddings = self.lm.get_input_embeddings()
 
-    print("Restoring pretrained weights for the visual model.")
-    if 'clip' in visual_encoder:
-      self.visual_model = CLIPVisionModel.from_pretrained(visual_encoder)
+    
+    if "task" in dir(args) and args.task == "audio-captioning":
+      print("-"*10,"Audio embedding","-"*10)
+      embedding_dim_audio = self.input_embeddings.embedding_dim * self.args.n_audio_tokens
+      self.audio_embeddings = nn.Linear(hidden_size_audio,embedding_dim_audio)
     else:
-      self.visual_model = AutoModel.from_pretrained(visual_encoder)
+      for layer_idx in self.args.text_emb_layers:
+        if (layer_idx == -1 or layer_idx == self.lm.config.num_hidden_layers) and ('bert' not in opt_version):
+          if 'opt' in opt_version:  # OPT models
+            in_dim = self.lm.config.word_embed_proj_dim
+          else:
+            raise NotImplementedError
 
-    if 'clip' in visual_encoder:
-      hidden_size = self.visual_model.config.hidden_size
-    else:
-      raise NotImplementedError
+          self.ret_text_hidden_fcs.append(
+            layers.TextFcLayer(in_dim, self.args.ret_emb_dim, num_input_tokens=self.args.num_tokens,
+                              num_output_tokens=1, mode=self.args.ret_text_fc_mode))
+          self.gen_text_hidden_fcs.append(
+            layers.TextFcLayer(in_dim, self.args.gen_emb_dim, num_input_tokens=self.args.num_tokens,
+                              num_output_tokens=self.args.num_clip_tokens, mode=self.args.text_fc_mode))
 
-    if self.args.freeze_vm:
-      print("Freezing the VM.")
-      self.visual_model.eval()
-      for param in self.visual_model.parameters():
-        param.requires_grad = False
-    else:
-      self.visual_model.train()
-
-    self.visual_model_name = visual_encoder
-
-    embedding_dim = self.input_embeddings.embedding_dim * self.args.n_visual_tokens
-    self.ret_text_hidden_fcs = nn.ModuleList([])
-    self.gen_text_hidden_fcs = nn.ModuleList([])
-
-    for layer_idx in self.args.text_emb_layers:
-      if (layer_idx == -1 or layer_idx == self.lm.config.num_hidden_layers) and ('bert' not in opt_version):
-        if 'opt' in opt_version:  # OPT models
-          in_dim = self.lm.config.word_embed_proj_dim
+        elif layer_idx < self.lm.config.num_hidden_layers:
+          self.ret_text_hidden_fcs.append(layers.TextFcLayer(self.lm.config.hidden_size, self.args.ret_emb_dim, num_input_tokens=self.args.num_tokens, num_output_tokens=1, mode=self.args.ret_text_fc_mode))
+          self.gen_text_hidden_fcs.append(layers.TextFcLayer(self.lm.config.hidden_size, self.args.gen_emb_dim, num_input_tokens=self.args.num_tokens, num_output_tokens=self.args.num_clip_tokens, mode=self.args.text_fc_mode))
         else:
-          raise NotImplementedError
+          raise ValueError(f'Embedding of layer {layer_idx} was requested but model only has {self.lm.config.num_hidden_layers} layers.')
+        
+      embedding_dim = self.input_embeddings.embedding_dim * self.args.n_visual_tokens
+      self.ret_text_hidden_fcs = nn.ModuleList([])
+      self.gen_text_hidden_fcs = nn.ModuleList([])
+      self.visual_embeddings = nn.Linear(hidden_size, embedding_dim)
+      # Retrieval image FC layer.
+      self.visual_fc = nn.Linear(hidden_size, self.args.ret_emb_dim) 
 
-        self.ret_text_hidden_fcs.append(
-          layers.TextFcLayer(in_dim, self.args.ret_emb_dim, num_input_tokens=self.args.num_tokens,
-                             num_output_tokens=1, mode=self.args.ret_text_fc_mode))
-        self.gen_text_hidden_fcs.append(
-          layers.TextFcLayer(in_dim, self.args.gen_emb_dim, num_input_tokens=self.args.num_tokens,
-                             num_output_tokens=self.args.num_clip_tokens, mode=self.args.text_fc_mode))
-
-      elif layer_idx < self.lm.config.num_hidden_layers:
-        self.ret_text_hidden_fcs.append(layers.TextFcLayer(self.lm.config.hidden_size, self.args.ret_emb_dim, num_input_tokens=self.args.num_tokens, num_output_tokens=1, mode=self.args.ret_text_fc_mode))
-        self.gen_text_hidden_fcs.append(layers.TextFcLayer(self.lm.config.hidden_size, self.args.gen_emb_dim, num_input_tokens=self.args.num_tokens, num_output_tokens=self.args.num_clip_tokens, mode=self.args.text_fc_mode))
-      else:
-        raise ValueError(f'Embedding of layer {layer_idx} was requested but model only has {self.lm.config.num_hidden_layers} layers.')
-      
-    print("-"*10,"Audio embedding","-"*10)
-    embedding_dim_audio = self.input_embeddings.embedding_dim * self.args.n_audio_tokens
-    self.audio_embeddings = nn.Linear(hidden_size_audio,embedding_dim_audio)
-
-    print("LM input embedding dimension : ",self.input_embeddings.embedding_dim)
-    print("number of visual tokens : ",self.args.n_visual_tokens)
-    print("Embedding dim: ",embedding_dim)
-    print("Retrieval embedding dim: ",self.args.ret_emb_dim)
-    self.visual_embeddings = nn.Linear(hidden_size, embedding_dim)
-      
-    # Retrieval image FC layer.
-    self.visual_fc = nn.Linear(hidden_size, self.args.ret_emb_dim)
     self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
 
   def get_audio_embs(self,audio_features): 
@@ -205,22 +201,26 @@ class GILLModel(nn.Module):
     # Overwrite train() to ensure frozen models remain frozen.
     if self.args.freeze_lm:
       self.lm.eval()
-    if self.args.freeze_vm:
+    if "freeze_vm" in dir(self.args) and self.args.freeze_vm:
       self.visual_model.eval()
-    if self.args.freeze_am:
+    if "freeze_am" in dir(self.args) and self.args.freeze_am:
       self.audio_model.eval()
-      
-    for param in self.visual_embeddings.parameters():
-      param.requires_grad = False
-      
-    for param in self.visual_fc.parameters():
-      param.requires_grad = False
-      
-    for param in self.ret_text_hidden_fcs.parameters():
-      param.requires_grad = False
-      
-    for param in self.gen_text_hidden_fcs.parameters():
-      param.requires_grad = False
+    
+    if "visual_embeddings" in dir(self):
+      for param in self.visual_embeddings.parameters():
+        param.requires_grad = False
+    
+    if "visual_fc" in dir(self):  
+      for param in self.visual_fc.parameters():
+        param.requires_grad = False
+    
+    if "ret_text_hidden_fcs" in dir(self):
+      for param in self.ret_text_hidden_fcs.parameters():
+        param.requires_grad = False
+    
+    if "gen_text_hidden_fcs" in dir(self): 
+      for param in self.gen_text_hidden_fcs.parameters():
+        param.requires_grad = False
 
 
   def forward(
@@ -317,7 +317,7 @@ class GILLModel(nn.Module):
       for label in full_labels:
         for k, token in enumerate(label):
           # Mask out retrieval/gen tokens if they exist.
-          if token in [self.tokenizer.pad_token_id] + self.retrieval_token_idx + self.gen_token_idx:
+          if "retrieval_token_idx" in dir(self) and token in [self.tokenizer.pad_token_id] + self.retrieval_token_idx + self.gen_token_idx:
             label[k:] = -100
             pad_idx.append(k)
             break
@@ -728,7 +728,7 @@ class GILL(nn.Module):
 
     with torch.no_grad():
       for p in prompts:
-        print(type(p))
+        # print(type(p))
         if type(p) == Image.Image:
           # Encode as image.
           pixel_values = utils.get_pixel_values_for_model(self.model.feature_extractor, p)
@@ -782,120 +782,124 @@ class GILL(nn.Module):
       # Save outputs as an interleaved list.
       return_outputs = []
       # Find up to max_num_rets [IMG] tokens, and their corresponding scores.
-      all_ret_idx = [i for i, x in enumerate(generated_ids[0, :] == self.model.retrieval_token_idx[0]) if x][:max_num_rets]
-      seen_image_idx = []  # Avoid showing the same image multiple times.
+      
+      if "retrieval_token_idx" in dir(self.model):
+        all_ret_idx = [i for i, x in enumerate(generated_ids[0, :] == self.model.retrieval_token_idx[0]) if x][:max_num_rets]
+        seen_image_idx = []  # Avoid showing the same image multiple times.
 
-      last_ret_idx = 0
-      if len(all_ret_idx) == 0:
-        # No [IMG] tokens.
+        last_ret_idx = 0
+        if len(all_ret_idx) == 0:
+          # No [IMG] tokens.
+          caption = self.model.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
+          return_outputs.append(utils.truncate_caption(caption))
+        else:
+          for ret_idx in all_ret_idx:
+            assert generated_ids[0, ret_idx:ret_idx+self.model.num_tokens].cpu().detach().numpy().tolist() == self.model.retrieval_token_idx, (generated_ids[0, ret_idx:ret_idx+self.model.num_tokens], self.model.retrieval_token_idx)
+            raw_emb = embeddings[:, ret_idx:ret_idx+self.model.num_tokens, :]  # (1, 8, 4096)
+            assert len(self.model.args.text_emb_layers) == 1
+
+            image_outputs = {
+              'gen': [],
+              'ret': [],
+              'decision': None,
+            }
+
+            if self.emb_matrix is not None:
+              # Produce retrieval embedding.
+              ret_emb = self.model.ret_text_hidden_fcs[0](raw_emb, None)[:, 0, :]  # (1, 256)
+              ret_emb = ret_emb / ret_emb.norm(dim=-1, keepdim=True)
+              ret_emb = ret_emb.type(self.emb_matrix.dtype)  # (1, 256)
+              scores = self.emb_matrix @ ret_emb.T
+
+              # Downweight seen images.
+              for seen_idx in seen_image_idx:
+                scores[seen_idx, :] -= 1000
+
+              # Get the top 3 images for each image.
+              _, top_image_idx = scores.squeeze().topk(3)
+              for img_idx in top_image_idx:
+                # Find the first image that does not error out.
+                try:
+                  seen_image_idx.append(img_idx)
+                  img = utils.get_image_from_url(self.path_array[img_idx])
+                  image_outputs['ret'].append((img, 'ret', scores[img_idx].item()))
+                  if len(image_outputs) == max_num_rets:
+                    break
+                except (UnidentifiedImageError, ConnectionError, OSError):
+                  pass
+
+              # Make decision with MLP.
+              if self.decision_model is not None:
+                decision_emb = raw_emb[:, 0, :]  # (1, 4096)
+                assert decision_emb.shape[1] == 4096, decision_emb.shape
+                max_ret_score = scores.max().reshape((1, 1)).clone().detach().to(device=decision_emb.device, dtype=decision_emb.dtype)
+                decision_logits = self.decision_model(torch.cat([decision_emb, max_ret_score], dim=-1))
+                probs = decision_logits.softmax(dim=-1).cpu().float().numpy().tolist()
+                image_outputs['decision'] = [self.idx2dec[decision_logits.argmax().item()]] + probs
+            else:
+              # If no embedding matrix is provided, generate instead.
+              image_outputs['decision'] = ['gen', [0, 1]]
+
+            # Produce generation embedding.
+            gen_prefix = ' '.join([f'[IMG{i}]' for i in range(self.model.args.num_tokens)])
+            gen_prefx_ids = self.model.tokenizer(gen_prefix, add_special_tokens=False, return_tensors="pt").input_ids.to(self.model.logit_scale.device)
+            gen_prefix_embs = self.model.input_embeddings(gen_prefx_ids)  # (1, T, D)
+            print("Raw embedding shape :",raw_emb.shape)
+            print("Generate prefix embeddings :",gen_prefix_embs.shape)
+            gen_emb = self.model.gen_text_hidden_fcs[0](raw_emb, gen_prefix_embs)  # (1, 77, 768)
+
+            if gen_emb.shape[1] != 77:
+              print(f"Padding {gen_emb.shape} with zeros")
+              bs = gen_emb.shape[0]
+              clip_emb = 768
+              gen_emb = gen_emb.reshape(bs, -1, clip_emb)  # (bs, T, 768)
+              seq_len = gen_emb.shape[1]
+              gen_emb = torch.cat([gen_emb, torch.zeros((bs, 77 - seq_len, clip_emb), device=gen_emb.device, dtype=gen_emb.dtype)], dim=1)
+              print('Padded to', gen_emb.shape)
+
+            gen_emb = gen_emb.repeat(self.num_gen_images, 1, 1)  # (self.num_gen_images, 77, 768)
+
+            # OPTIM(jykoh): Only generate if scores are low.
+            if self.load_sd:
+              # If num_gen_images > 8, split into multiple batches (for GPU memory reasons).
+              gen_max_bs = 8
+              gen_images = []
+              for i in range(0, self.num_gen_images, gen_max_bs):
+                gen_images.extend(
+                  self.sd_pipe(prompt_embeds=gen_emb[i:i+gen_max_bs], generator=generator,
+                              guidance_scale=guidance_scale, num_inference_steps=num_inference_steps).images)
+
+              all_gen_pixels = []
+              for img in gen_images:
+                pixel_values = utils.get_pixel_values_for_model(self.model.feature_extractor, img.resize((224, 224)).convert('RGB'))
+                pixel_values = pixel_values.to(device=self.model.logit_scale.device, dtype=self.model.logit_scale.dtype)
+                all_gen_pixels.append(pixel_values)
+              
+              if self.emb_matrix is not None:
+                all_gen_pixels = torch.stack(all_gen_pixels, dim=0)
+                gen_visual_embs = self.model.get_visual_embs(all_gen_pixels, mode='retrieval')  # (1, D)
+                gen_visual_embs = gen_visual_embs / gen_visual_embs.norm(dim=-1, keepdim=True)
+                gen_visual_embs = gen_visual_embs.type(self.emb_matrix.dtype)
+                gen_rank_scores = (gen_visual_embs @ ret_emb.T).squeeze()
+                sorted_score_idx = torch.argsort(-gen_rank_scores)
+
+                # Rank images by retrieval score.
+                if self.num_gen_images > 1:
+                  image_outputs['gen'] = [(gen_images[idx], gen_rank_scores[idx].item()) for idx in sorted_score_idx]
+                else:
+                  image_outputs['gen'] = [(gen_images[0], gen_rank_scores.item())]
+              else:
+                image_outputs['gen'] = [(gen_images[0], 0)]
+            else:
+              image_outputs['gen'] = [gen_emb]
+
+            caption = self.model.tokenizer.batch_decode(generated_ids[:, last_ret_idx:ret_idx], skip_special_tokens=True)[0]
+            last_ret_idx = ret_idx + 1
+            return_outputs.append(utils.truncate_caption(caption) + f' {gen_prefix}')
+            return_outputs.append(image_outputs)
+      else:
         caption = self.model.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
         return_outputs.append(utils.truncate_caption(caption))
-      else:
-        for ret_idx in all_ret_idx:
-          assert generated_ids[0, ret_idx:ret_idx+self.model.num_tokens].cpu().detach().numpy().tolist() == self.model.retrieval_token_idx, (generated_ids[0, ret_idx:ret_idx+self.model.num_tokens], self.model.retrieval_token_idx)
-          raw_emb = embeddings[:, ret_idx:ret_idx+self.model.num_tokens, :]  # (1, 8, 4096)
-          assert len(self.model.args.text_emb_layers) == 1
-
-          image_outputs = {
-            'gen': [],
-            'ret': [],
-            'decision': None,
-          }
-
-          if self.emb_matrix is not None:
-            # Produce retrieval embedding.
-            ret_emb = self.model.ret_text_hidden_fcs[0](raw_emb, None)[:, 0, :]  # (1, 256)
-            ret_emb = ret_emb / ret_emb.norm(dim=-1, keepdim=True)
-            ret_emb = ret_emb.type(self.emb_matrix.dtype)  # (1, 256)
-            scores = self.emb_matrix @ ret_emb.T
-
-            # Downweight seen images.
-            for seen_idx in seen_image_idx:
-              scores[seen_idx, :] -= 1000
-
-            # Get the top 3 images for each image.
-            _, top_image_idx = scores.squeeze().topk(3)
-            for img_idx in top_image_idx:
-              # Find the first image that does not error out.
-              try:
-                seen_image_idx.append(img_idx)
-                img = utils.get_image_from_url(self.path_array[img_idx])
-                image_outputs['ret'].append((img, 'ret', scores[img_idx].item()))
-                if len(image_outputs) == max_num_rets:
-                  break
-              except (UnidentifiedImageError, ConnectionError, OSError):
-                pass
-
-            # Make decision with MLP.
-            if self.decision_model is not None:
-              decision_emb = raw_emb[:, 0, :]  # (1, 4096)
-              assert decision_emb.shape[1] == 4096, decision_emb.shape
-              max_ret_score = scores.max().reshape((1, 1)).clone().detach().to(device=decision_emb.device, dtype=decision_emb.dtype)
-              decision_logits = self.decision_model(torch.cat([decision_emb, max_ret_score], dim=-1))
-              probs = decision_logits.softmax(dim=-1).cpu().float().numpy().tolist()
-              image_outputs['decision'] = [self.idx2dec[decision_logits.argmax().item()]] + probs
-          else:
-            # If no embedding matrix is provided, generate instead.
-            image_outputs['decision'] = ['gen', [0, 1]]
-
-          # Produce generation embedding.
-          gen_prefix = ' '.join([f'[IMG{i}]' for i in range(self.model.args.num_tokens)])
-          gen_prefx_ids = self.model.tokenizer(gen_prefix, add_special_tokens=False, return_tensors="pt").input_ids.to(self.model.logit_scale.device)
-          gen_prefix_embs = self.model.input_embeddings(gen_prefx_ids)  # (1, T, D)
-          print("Raw embedding shape :",raw_emb.shape)
-          print("Generate prefix embeddings :",gen_prefix_embs.shape)
-          gen_emb = self.model.gen_text_hidden_fcs[0](raw_emb, gen_prefix_embs)  # (1, 77, 768)
-
-          if gen_emb.shape[1] != 77:
-            print(f"Padding {gen_emb.shape} with zeros")
-            bs = gen_emb.shape[0]
-            clip_emb = 768
-            gen_emb = gen_emb.reshape(bs, -1, clip_emb)  # (bs, T, 768)
-            seq_len = gen_emb.shape[1]
-            gen_emb = torch.cat([gen_emb, torch.zeros((bs, 77 - seq_len, clip_emb), device=gen_emb.device, dtype=gen_emb.dtype)], dim=1)
-            print('Padded to', gen_emb.shape)
-
-          gen_emb = gen_emb.repeat(self.num_gen_images, 1, 1)  # (self.num_gen_images, 77, 768)
-
-          # OPTIM(jykoh): Only generate if scores are low.
-          if self.load_sd:
-            # If num_gen_images > 8, split into multiple batches (for GPU memory reasons).
-            gen_max_bs = 8
-            gen_images = []
-            for i in range(0, self.num_gen_images, gen_max_bs):
-              gen_images.extend(
-                self.sd_pipe(prompt_embeds=gen_emb[i:i+gen_max_bs], generator=generator,
-                             guidance_scale=guidance_scale, num_inference_steps=num_inference_steps).images)
-
-            all_gen_pixels = []
-            for img in gen_images:
-              pixel_values = utils.get_pixel_values_for_model(self.model.feature_extractor, img.resize((224, 224)).convert('RGB'))
-              pixel_values = pixel_values.to(device=self.model.logit_scale.device, dtype=self.model.logit_scale.dtype)
-              all_gen_pixels.append(pixel_values)
-            
-            if self.emb_matrix is not None:
-              all_gen_pixels = torch.stack(all_gen_pixels, dim=0)
-              gen_visual_embs = self.model.get_visual_embs(all_gen_pixels, mode='retrieval')  # (1, D)
-              gen_visual_embs = gen_visual_embs / gen_visual_embs.norm(dim=-1, keepdim=True)
-              gen_visual_embs = gen_visual_embs.type(self.emb_matrix.dtype)
-              gen_rank_scores = (gen_visual_embs @ ret_emb.T).squeeze()
-              sorted_score_idx = torch.argsort(-gen_rank_scores)
-
-              # Rank images by retrieval score.
-              if self.num_gen_images > 1:
-                image_outputs['gen'] = [(gen_images[idx], gen_rank_scores[idx].item()) for idx in sorted_score_idx]
-              else:
-                image_outputs['gen'] = [(gen_images[0], gen_rank_scores.item())]
-            else:
-              image_outputs['gen'] = [(gen_images[0], 0)]
-          else:
-            image_outputs['gen'] = [gen_emb]
-
-          caption = self.model.tokenizer.batch_decode(generated_ids[:, last_ret_idx:ret_idx], skip_special_tokens=True)[0]
-          last_ret_idx = ret_idx + 1
-          return_outputs.append(utils.truncate_caption(caption) + f' {gen_prefix}')
-          return_outputs.append(image_outputs)
-
     return return_outputs
 
   def get_log_likelihood_scores(
@@ -943,7 +947,6 @@ class GILL(nn.Module):
     outputs = self.model.lm(inputs_embeds=input_embs, labels=input_ids, use_cache=False, output_hidden_states=True)
     return -outputs.loss.item()  
 
-
 def load_gill(model_dir: str, ckpt_name: str, decision_model_name: str = None, load_ret_embs: bool = True) -> GILL:
   model_args_path = os.path.join(model_dir, 'model_args.json')
   model_ckpt_path = os.path.join(model_dir, ckpt_name)
@@ -983,20 +986,23 @@ def load_gill(model_dir: str, ckpt_name: str, decision_model_name: str = None, l
   if tokenizer.pad_token is None:
       tokenizer.pad_token_id = tokenizer.eos_token_id
   # Add an image token for loss masking (and visualization) purposes.
-  tokenizer.add_special_tokens({"cls_token": "<|image|>"})  # add special image token to tokenizer
-
-  # Add [IMG] tokens to the vocabulary.
-  model_kwargs['retrieval_token_idx'] = []
-  for i in range(model_kwargs['num_tokens']):
-      print(f'Adding [IMG{i}] token to vocabulary.')
-      print(f'Before adding new token, tokenizer("[IMG{i}]") =', tokenizer(f'[IMG{i}]', add_special_tokens=False))
-      num_added_tokens = tokenizer.add_tokens(f'[IMG{i}]')
-      print(f'After adding {num_added_tokens} new tokens, tokenizer("[IMG{i}]") =', tokenizer(f'[IMG{i}]', add_special_tokens=False))
-      ret_token_idx = tokenizer(f'[IMG{i}]', add_special_tokens=False).input_ids
-      assert len(ret_token_idx) == 1, ret_token_idx
-      model_kwargs['retrieval_token_idx'].append(ret_token_idx[0])
-  # Use the same RET tokens for generation.
-  model_kwargs['gen_token_idx'] = model_kwargs['retrieval_token_idx']
+  
+  if "task" in model_kwargs and model_kwargs["task"] == "audio-captioning":
+    pass
+  else:
+    tokenizer.add_special_tokens({"cls_token": "<|image|>"})  # add special image token to tokenizer
+    # Add [IMG] tokens to the vocabulary.
+    model_kwargs['retrieval_token_idx'] = []
+    for i in range(model_kwargs['num_tokens']):
+        print(f'Adding [IMG{i}] token to vocabulary.')
+        print(f'Before adding new token, tokenizer("[IMG{i}]") =', tokenizer(f'[IMG{i}]', add_special_tokens=False))
+        num_added_tokens = tokenizer.add_tokens(f'[IMG{i}]')
+        print(f'After adding {num_added_tokens} new tokens, tokenizer("[IMG{i}]") =', tokenizer(f'[IMG{i}]', add_special_tokens=False))
+        ret_token_idx = tokenizer(f'[IMG{i}]', add_special_tokens=False).input_ids
+        assert len(ret_token_idx) == 1, ret_token_idx
+        model_kwargs['retrieval_token_idx'].append(ret_token_idx[0])
+    # Use the same RET tokens for generation.
+    model_kwargs['gen_token_idx'] = model_kwargs['retrieval_token_idx']
 
   args = namedtuple('args', model_kwargs)(**model_kwargs)
 
@@ -1027,7 +1033,8 @@ def load_gill(model_dir: str, ckpt_name: str, decision_model_name: str = None, l
   with torch.no_grad():
       if 'share_ret_gen' in model_kwargs:
         assert model_kwargs['share_ret_gen'], 'Model loading only supports share_ret_gen=True for now.'
-      model.model.input_embeddings.weight[-model_kwargs['num_tokens']:, :].copy_(img_token_embeddings[-model_kwargs['num_tokens']:, :])
+      if "num_tokens" in model_kwargs:
+        model.model.input_embeddings.weight[-model_kwargs['num_tokens']:, :].copy_(img_token_embeddings[-model_kwargs['num_tokens']:, :])
 
   if load_ret_embs and len(embs_paths) > 0:
     logit_scale = model.model.logit_scale.exp()
