@@ -239,6 +239,20 @@ def main_worker(ngpus_per_node, args):
                   weight_decay=args.weight_decay,
                   eps=1e-8)
    
+   cudnn.benchmark = True      
+   train_dataset = data.get_audio_dataset(args,"train",tokenizer) 
+   val_dataset = data.get_audio_dataset(args,"val",tokenizer)
+
+   train_loader = torch.utils.data.DataLoader(
+      train_dataset, batch_size = args.batch_size, shuffle = False)
+   
+   val_loader = torch.utils.data.DataLoader(
+      val_dataset, batch_size = args.batch_size, shuffle = True)
+   
+   args.steps_per_epoch = len(train_loader) # change
+   scheduler_steplr = StepLR(optimizer, step_size=args.lr_schedule_step_size * args.steps_per_epoch, gamma=args.lr_schedule_gamma)
+   scheduler = GradualWarmupScheduler(optimizer, multiplier=1.0, total_epoch=args.lr_warmup_steps, after_scheduler=scheduler_steplr)
+   
    if args.resume:
       if os.path.isfile(args.resume):
          print("=> loading checkpoint '{}'".format(args.resume))
@@ -257,20 +271,6 @@ def main_worker(ngpus_per_node, args):
    #    for name, param in model.named_parameters():
    #       if name == param_to_freeze:
    #          param.requires_grad = False
-
-   cudnn.benchmark = True      
-   train_dataset = data.get_audio_dataset(args,"train",tokenizer) 
-   val_dataset = data.get_audio_dataset(args,"val",tokenizer)
-
-   train_loader = torch.utils.data.DataLoader(
-      train_dataset, batch_size = args.batch_size, shuffle = False)
-   
-   val_loader = torch.utils.data.DataLoader(
-      val_dataset, batch_size = args.batch_size, shuffle = True)
-   
-   args.steps_per_epoch = 2 # change
-   scheduler_steplr = StepLR(optimizer, step_size=args.lr_schedule_step_size * args.steps_per_epoch, gamma=args.lr_schedule_gamma)
-   scheduler = GradualWarmupScheduler(optimizer, multiplier=1.0, total_epoch=args.lr_warmup_steps, after_scheduler=scheduler_steplr)
    
    #training loop
    saving_checkpoint_freq = 10
@@ -412,8 +412,8 @@ def train(train_loader, model, tokenizer, criterion, optimizer, epoch, scheduler
          cap_audio_emb_norm.reset()
          inp_emb_norm.reset()
          
-      if i == args.steps_per_epoch - 1:
-         break
+      # if i == args.steps_per_epoch - 1:
+      #    break
 
       scheduler.step()
       curr_lr = scheduler.get_last_lr()
