@@ -11,9 +11,9 @@ checkpoints/gill_opt/cc3m_embeddings_urls.npy
 datasets/
 sin_100.wav
 rough_work.ipynb
-rough_work2.ipynb
 outputs/
 runs/
 eval_audiocaps.ipynb
 encoders-retrieval-scripts/results.csv
-encoders-retrieval-scripts/clap_audio_to_text.json
+encoders-retrieval-scripts/intermediate_result.json
+reasoning/

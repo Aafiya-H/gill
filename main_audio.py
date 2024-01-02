@@ -40,10 +40,7 @@ def parse_args(args):
    #                    help="Visual encoder to use.")
    parser.add_argument("--audio-model",default="laion/clap-htsat-fused",type=str,
                        help="audio encoder to use")
-   
-   # parser.add_argument('--num-clip-tokens', default=77, type=int, metavar='N', help='Number of CLIP token to use for generation.')
-
-   # add arguments for dataset
+   parser.add_argument("--checkpoint-saving-freq",default=15,help="number of epochs after which a checkpoint is saved")
 
    parser.add_argument('--log-base-dir', default='./runs', type=str,
             help='Base directory to write logs and ckpts to.')
@@ -67,9 +64,9 @@ def parse_args(args):
 
    parser.add_argument('-d', '--dataset', metavar='DATASET',  help='Dataset to train on', 
                        default='audiocaps', type=str)
-   parser.add_argument('--dataset-dir', default='../../../../../mnt/media/wiseyak/reasoning-datasets/AudioCaps', type=str,
+   parser.add_argument('--dataset-dir', default='datasets/AudioCaps', type=str,
             help='Dataset directory containing .csv files.')
-   parser.add_argument('--audio-dir', default='../../../../../mnt/media/wiseyak/reasoning-datasets/AudioCaps', type=str,
+   parser.add_argument('--audio-dir', default='datasets/AudioCaps', type=str,
             help='Dataset directory containing .wav files.')
    parser.add_argument('--val-batch-size', default=None, type=int)
    parser.add_argument('--lr', '--learning-rate', default=0.001, type=float,
@@ -273,7 +270,6 @@ def main_worker(ngpus_per_node, args):
    #          param.requires_grad = False
    
    #training loop
-   saving_checkpoint_freq = 10
    for epoch in tqdm(range(args.start_epoch,args.epochs),total=args.epochs):
       #train for 1 epoch
       try:
@@ -285,7 +281,7 @@ def main_worker(ngpus_per_node, args):
       acc1 = validate.validate_for_audiocaps(val_loader, model, tokenizer, criterion, epoch, args)
       is_best = acc1 > best_acc1
       best_acc1 = max(acc1, best_acc1)
-      if is_best or epoch % saving_checkpoint_freq == 0:
+      if is_best or epoch % args.checkpoint_saving_freq == 0:
          stripped_state_dict = {
             k: v for k, v in model.state_dict().items() if 
             ('.lm' not in k and '.vis' not in k and ".audio_model" not in k and "gen" not in k and "ret" not in k) # check if more need to be added

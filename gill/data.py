@@ -27,10 +27,7 @@ def get_audio_dataset(args, split:str, tokenizer, precision: str = 'fp32') -> Da
   audio_data_dirs = []
 
   if "audiocaps" in args.dataset:
-    if split == "train":
-      dataset_paths.append(os.path.join(args.dataset_dir,f'{split}-10s-downloaded.csv'))
-    else:
-      dataset_paths.append(os.path.join(args.dataset_dir,f'{split}-downloaded.csv'))
+    dataset_paths.append(os.path.join(args.dataset_dir,f'{split}.csv'))
     audio_data_dirs.append(os.path.join(args.audio_dir, f'{split}'))
   else:
     NotImplementedError
@@ -42,7 +39,7 @@ def get_audio_dataset(args, split:str, tokenizer, precision: str = 'fp32') -> Da
       for (path, image_dir) in zip(dataset_paths, audio_data_dirs)
     ])
   else:
-    dataset = AudioCapsDataset(dataset_paths[0],audio_data_dirs[0],tokenizer,"audiocap_id","caption",
+    dataset = AudioCapsDataset(dataset_paths[0],audio_data_dirs[0],tokenizer,
                                args.audio_model,max_len=args.max_len, precision=args.precision)
   return dataset
 
@@ -95,7 +92,7 @@ def get_dataset(args, split: str, tokenizer, precision: str = 'fp32') -> Dataset
   return dataset
 
 class AudioCapsDataset(Dataset):
-  def __init__(self,csv_file_path, base_audio_dir,tokenizer, audiocap_id_col, caption_col, 
+  def __init__(self,csv_file_path, base_audio_dir,tokenizer, 
                feature_extractor_model: str, max_len: int = 32, precision: str = 'fp32'):
     self.df = pd.read_csv(csv_file_path)
     self.base_audio_dir = base_audio_dir
@@ -108,21 +105,13 @@ class AudioCapsDataset(Dataset):
 
   def __getitem__(self,index):
     row = self.df.iloc[index]
-    audio_file_path = os.path.join(self.base_audio_dir, str(row['audiocap_id']) + ".wav")
+    audio_file_path = os.path.join(self.base_audio_dir, str(row['youtube_id']) + ".wav")
      
     audio_data, sampling_rate = librosa.load(audio_file_path)
     target_sampling_rate = 48000 
     audio_data = librosa.resample(audio_data, orig_sr=sampling_rate, target_sr=target_sampling_rate)
     sampling_rate = target_sampling_rate
     audio_features = utils.get_audio_values_for_model(self.feature_extractor,audio_data,sampling_rate)
-    # audio_file_path = os.path.join(self.base_audio_dir,str(self.audio_files[index])+".wav")
-    # # audio_file_path = os.path.join(self.base_audio_dir,"0.wav")
-    # caption = self.captions[index]
-    # audio_data, sampling_rate = librosa.load(audio_file_path)
-    # target_sampling_rate = 48000 
-    # audio_data = librosa.resample(audio_data, orig_sr=sampling_rate, target_sr=target_sampling_rate)
-    # sampling_rate = target_sampling_rate
-    # audio_features = utils.get_audio_values_for_model(self.feature_extractor,audio_data,sampling_rate)
     tokenized_data = self.tokenizer(
           row["caption"],
           return_tensors="pt",

@@ -1,4 +1,4 @@
-from audiocaps_download import Downloader
+# from audiocaps_download import Downloader
 from tqdm import tqdm
 import pandas as pd
 import os
@@ -18,9 +18,10 @@ def download_audiocaps(split):
     root_path = f"datasets/AudioCaps/{split}"
     if not os.path.exists(root_path):
         os.mkdir(root_path)
+        print("Path")
 
     for index, row in tqdm(df.iterrows(), total=len(df)):
-        target_file_path = os.path.join(root_path, str(row["audiocap_id"]) + ".wav")
+        target_file_path = os.path.join(root_path, str(row["youtube_id"]) + ".wav")
         if os.path.exists(target_file_path):
             try:
                 duration = get_audio_duration(target_file_path)

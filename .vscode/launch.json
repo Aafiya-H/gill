@@ -13,7 +13,7 @@
             "console": "integratedTerminal",
             "justMyCode": false,
             "args": [
-                "--opt-version","facebook/opt-125m",
+                "--opt-version","facebook/opt-1.3b",
                 "--epochs","20",
                 "--batch-size","16",
             ]
@@ -30,9 +30,18 @@
         {
             "name": "retrieval:T-->A",
             "type": "python",
-            "python":"../../../../../mnt/media/wiseyak/reasoning/bin/python3",
+            "python":"reasoning/bin/python",
             "request": "launch",
-            "program": "encoders-retrieval-scripts/clap_text_to_audio.py",
+            "program": "encoders-retrieval-scripts/new.py",
+            "console": "integratedTerminal",
+            "justMyCode": false
+        },
+        {
+            "name": "retrieval:A-->T",
+            "type": "python",
+            "python":"reasoning/bin/python",
+            "request": "launch",
+            "program": "encoders-retrieval-scripts/clap_audio_to_text.py",
             "console": "integratedTerminal",
             "justMyCode": false
         }

@@ -114,7 +114,7 @@ pyparsing==3.0.9
 pytest==7.2.1
 python-dateutil==2.8.2
 python-json-logger==2.0.7
-pytorch-triton==2.1.0+e6216047b8
+# pytorch-triton==2.1.0+e6216047b8
 pytz==2023.3
 PyYAML==6.0
 pyzmq==25.1.0
@@ -145,10 +145,10 @@ threadpoolctl==3.2.0
 tinycss2==1.2.1
 tokenizers==0.12.1
 tomli==2.0.1
-torch==2.1.0+cu118
-torchaudio==2.1.0+cu118
+# torch==2.1.0+cu118
+# torchaudio==2.1.0+cu118
 torchmetrics==1.1.1
-torchvision==0.16.0+cu118
+# torchvision==0.16.0+cu118
 tornado==6.3.2
 tqdm==4.64.1
 traitlets==5.9.0
@@ -157,7 +157,7 @@ triton==2.1.0
 typing_extensions==4.4.0
 uri-template==1.3.0
 urllib3==1.26.14
-warmup-scheduler==0.3.2
+warmup-scheduler
 wav2clip==0.1.0
 wcwidth==0.2.6
 webcolors==1.13

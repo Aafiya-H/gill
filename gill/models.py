@@ -260,7 +260,6 @@ class GILLModel(nn.Module):
       input_embs_norm = ((input_embs ** 2).sum(dim=-1) ** 0.5).mean()
       last_embedding_idx = caption_len - 1  # -1 to retrieve the token before the eos token
 
-
     if input_prefix is not None:
       prompt_ids = self.tokenizer(input_prefix, add_special_tokens=False, return_tensors="pt").input_ids
       prompt_ids = prompt_ids.to(device)
