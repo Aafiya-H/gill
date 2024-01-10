@@ -31,10 +31,10 @@ def get_scores(df):
     for index,audio_file_name in tqdm(enumerate(audio_file_names),total=len(audio_file_names)):
         gt_captions =  [df.iloc[index][f"caption_{i}"] for i in range(1,6)]
 
-        audio_data, sampling_rate = librosa.load(os.path.join(base_path,split,audio_file_name))
-        target_sampling_rate = 48000 
-        audio_data = librosa.resample(audio_data, orig_sr=sampling_rate, target_sr=target_sampling_rate)
-        inputs = utils.get_audio_values_for_model(contrastive_feature_extractor,audio_data,target_sampling_rate)
+        audio_data, sampling_rate = librosa.load(os.path.join(base_path,split,audio_file_name),sr=48000)
+        # target_sampling_rate = 48000 
+        # audio_data = librosa.resample(audio_data, orig_sr=sampling_rate, target_sr=target_sampling_rate)
+        inputs = utils.get_audio_values_for_model(contrastive_feature_extractor,audio_data,sampling_rate)
         audio_features = contrastive_model.get_audio_features(**inputs)
 
         text_sets = [all_captions[0:957],all_captions[957:2*957],all_captions[2*957:3*957],all_captions[3*957:4*957],all_captions[4*957:]]
@@ -92,7 +92,7 @@ if __name__ == "__main__":
     map10 = sum(scores["AP@10"])/ len(df)
     
     row = pd.DataFrame.from_dict({
-        "Model":[contrastive_model_name], "R@5":[r5], "R@10":[r10],"MAP@10":[map10],"Direction":["A->T"]   
+        "Model":[contrastive_model_name + "(laion implementation)"], "R@5":[r5], "R@10":[r10],"MAP@10":[map10],"Direction":["A->T"]   
     })
     if os.path.exists("encoders-retrieval-scripts/results.csv"):
         results_df = pd.read_csv("encoders-retrieval-scripts/results.csv")
@@ -101,6 +101,6 @@ if __name__ == "__main__":
     results_df = pd.concat([results_df,row],axis=0)
     print("-"*20,"Results","-"*20)
     print(row)
-    results_df.to_csv("encoders-retrieval-scripts/results.csv")
+    results_df.to_csv("encoders-retrieval-scripts/results.csv",index=False)
     # print("Length of dataset:",len(audiocaps_df))
 
